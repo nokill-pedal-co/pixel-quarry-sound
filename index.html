@@ -443,6 +443,12 @@ textarea {
 .row.locked .buy.afford { border-color: rgba(255, 64, 224, 0.6); }
 
 /* Pixel Quarry Sound */
+.seg { display: flex; gap: 6px; margin-top: 4px; }
+.seg label { flex: 1; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span { display: flex; align-items: center; justify-content: center; min-height: 44px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; color: var(--muted); }
+.seg input:checked + span { border-color: var(--gold); color: var(--gold); font-weight: 700; }
+.seg input:focus-visible + span { outline: 2px solid var(--gold); outline-offset: 2px; }
 .slider { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 14px; }
 .slider input { flex: 1; accent-color: var(--gold); }
 .logo small { display: block; margin-top: 8px; font-size: 18px; letter-spacing: 0.3em; color: var(--dia); text-align: center; }
@@ -2665,7 +2671,20 @@ registerProcessor('pocket-six', PocketSix);
 
   const RES = 6;            // hits kept per instrument between its notes, on screen
   const STEPS = 16;         // steps per bar
-  const BARS_PER_CHORD = 2;
+  // Three ways to play the same field (the World tab's Style):
+  //  drift   - the conductor: hits wait for their instrument's beat. The default.
+  //  tombola - like the OP-1's: a hit on screen plays the moment it lands. The sustained voices
+  //            (Venom, Drill, Seeker) stay on the beat, where they have room to swell.
+  //  wild    - faster and fuller: hits on contact and on the beat, notes leap octaves and bend,
+  //            chords and modes change every bar, the echo runs long.
+  // bounce: notes/s the hits may play on contact (0 = none), gap: s between one type's.
+  const STYLES = {
+    drift: { speed: 1, grid: true, bounce: 0, more: 0, air: 0, chordBars: 2, swing: 0.12, leap: 0, bend: 0 },
+    tombola: { speed: 1, grid: false, bounce: 16, gap: 0.09, more: 0, air: 0, chordBars: 2, swing: 0.12, leap: 0, bend: 0 },
+    wild: { speed: 1.5, grid: true, bounce: 10, gap: 0.12, more: 3, air: 0.25, chordBars: 1, swing: 0.3, leap: 0.3, bend: 0.15, fb: 0.62, turn: 0.8, modes: true },
+  };
+  const SUSTAINED = { venom: 1, drill: 1, seeker: 1 };
+  const BARS_PER_CHORD = 2;  // a flourish's held chord
   const MAX_VOICES = 30;
   const LOOKAHEAD = 0.12;   // s scheduled ahead of the clock
   const NEAR = 320;         // px from a hidden story relic where the music starts to rise
@@ -2731,8 +2750,9 @@ registerProcessor('pocket-six', PocketSix);
     const seed = opts.seed >>> 0;
     this.tonic = TONICS[seed % TONICS.length] + 12;
     this.baseBpm = 62 + (seed >>> 8) % 11;
-    this.bpm = this.baseBpm;
-    this.stepDur = 60 / this.bpm / 4;
+    this.styleName = STYLES[opts.style] ? opts.style : 'drift';
+    this.style = STYLES[this.styleName];
+    this.setBpm(this.baseBpm);
     this.depth = opts.depth || 0;
     this.palette = this.depth % 4;
     this.atmos = ATMOS[ATMOS_OF[this.palette]];
@@ -2772,6 +2792,8 @@ registerProcessor('pocket-six', PocketSix);
     this.rm = new Uint8Array(n * RES); this.rb = new Uint8Array(n * RES);
     this.ax = new Int32Array(n); this.ay = new Int32Array(n); this.am = new Uint8Array(n); this.ab = new Uint8Array(n);
     this.lastHit = new Float64Array(n).fill(-99);
+    this.lastBounce = new Float64Array(n).fill(-99);     // on contact: when each type last played
+    this.tokens = 0; this.lastTok = 0;                   // and the shared budget for it
     this.rot = INST.map((_, i) => (i * 3) % STEPS);
     this.matRate = new Float64Array(D.MAT.length);
     this.matFrame = new Float64Array(D.MAT.length);
@@ -2899,9 +2921,31 @@ registerProcessor('pocket-six', PocketSix);
       const n = ++this.seenOn[t];
       const j = n <= RES ? n - 1 : Math.floor(this.rnd() * n);   // reservoir sample
       if (j < RES) { const o = t * RES + j; this.rx[o] = x; this.ry[o] = y; this.rm[o] = mat; this.rb[o] = broke ? 1 : 0; }
-    } else if (this.rnd() < 0.05 || this.cnt[t] === 1) {
-      this.ax[t] = x; this.ay[t] = y; this.am[t] = mat; this.ab[t] = broke ? 1 : 0;
+      if (this.style.bounce && !SUSTAINED[INST[t].name]) this.bounce(t, x, y, mat, broke, 1);
+    } else {
+      if (this.rnd() < 0.05 || this.cnt[t] === 1) { this.ax[t] = x; this.ay[t] = y; this.am[t] = mat; this.ab[t] = broke ? 1 : 0; }
+      if (this.style.bounce && !SUSTAINED[INST[t].name]) this.bounce(t, x, y, mat, broke, 0.38);
     }
+  };
+
+  // A hit that plays the moment it lands, if this type has had a breath since its last and the
+  // shared budget has room (a swarm of hundreds would otherwise be a hailstorm). Hits off screen
+  // (far < 1) play quiet and dark, and only now and then, so the field is never silent.
+  E.bounce = function (t, x, y, mat, broke, far) {
+    const st = this.style, now = Math.max(this.ctx.currentTime, this.time);
+    if (now - this.lastBounce[t] < st.gap * (far < 1 ? 8 : 1)) return;
+    this.tokens = Math.min(st.bounce * 0.4, this.tokens + (now - this.lastTok) * st.bounce);
+    this.lastTok = now;
+    if (this.tokens < (far < 1 ? st.bounce * 0.2 : 1)) return;   // off screen only gets what's spare
+    this.tokens--;
+    this.lastBounce[t] = now; this.lastHit[t] = now;
+    this.playHit(t, now + 0.006, x, y, mat, broke, far);
+  };
+
+  E.setStyle = function (name) {
+    if (!STYLES[name]) return;
+    this.styleName = name; this.style = STYLES[name];
+    this.setBpm(this.bpm);
   };
 
   // What the player can see, in world px. Hits in view play full; the rest are far away.
@@ -3019,16 +3063,18 @@ registerProcessor('pocket-six', PocketSix);
     }
     this.heartbeat(t0, s);
     this.weather(t0);
-    const keep = (0.72 + 0.22 * this.gravity + 0.08 * this.tension) * (theming ? 0.55 : 1);
-    const more = (this.gravity - 0.5) * 4;
+    const st = this.style;
+    const keep = (0.72 + 0.22 * this.gravity + 0.08 * this.tension + st.air) * (theming ? 0.55 : 1);
+    const more = (this.gravity - 0.5) * 4 + st.more;
     for (let t = 0; t < NB; t++) {
       if (!this.cnt[t] && this.time - this.lastHit[t] > 1.5) continue;
       const ins = INST[t];
-      const cap = t === I.bomb && !this.drums ? 1 : ins.k + 2;
+      if (!st.grid && !SUSTAINED[ins.name]) continue;   // these play on contact instead
+      const cap = t === I.bomb && !this.drums ? 1 : ins.k + 2 + st.more;
       const k = clamp(Math.round(1 + Math.log2(1 + this.rate[t]) * 0.7 + this.tension * 2 + Math.max(0, this.lift) * 0.3 + more), 1, cap);
       if (!this.pattern(k, t)[(s + this.rot[t]) % STEPS]) continue;
       if (this.rnd() > keep) continue;                  // leave some air
-      const t1 = t0 + (s % 2 ? this.stepDur * 0.12 : 0) + this.rnd() * 0.012;   // a little swing, a little hand
+      const t1 = t0 + (s % 2 ? this.stepDur * st.swing : 0) + this.rnd() * 0.012;   // a little swing, a little hand
       this.speak(t, t1);
     }
     this.step++;
@@ -3081,6 +3127,7 @@ registerProcessor('pocket-six', PocketSix);
     const ins = INST[t], v = this.view;
     let d = this.degreeOf(x, y, mat, ins, broke);
     if (t === I.seeker) d = this.seekerNote() + 7 * ins.oct;
+    else if (!ins.root && this.rnd() < this.style.leap) d += this.rnd() < 0.5 ? 7 : -7;
     const w = Math.max(1, v.x1 - v.x0);
     const pan = far < 1 ? (x < (v.x0 + v.x1) / 2 ? -0.9 : 0.9) : clamp(((x - v.x0) / w) * 1.8 - 0.9, -0.9, 0.9);
     const vel = (broke ? 1 : 0.55) * far * (0.85 + this.rnd() * 0.15);
@@ -3129,6 +3176,8 @@ registerProcessor('pocket-six', PocketSix);
       car.detune.value = -ins.detune; oscs.push(c2);
       const mix = ctx.createGain(); mix.gain.value = 0.6; car.connect(mix); c2.connect(mix); src = mix;
     }
+    const bend = this.bendOf(force);
+    for (const o of oscs) if (bend) { o.detune.setValueAtTime(o.detune.value, t0); o.detune.linearRampToValueAtTime(o.detune.value + bend, end); }
     if (ins.ratio) {
       const mod = ctx.createOscillator(); mod.frequency.value = f * ins.ratio;
       const mg = ctx.createGain(), peak = f * ins.index * bright * (muted ? 0.6 : 1);
@@ -3152,6 +3201,13 @@ registerProcessor('pocket-six', PocketSix);
     for (const o of oscs) { o.start(t0); o.stop(end); }
   };
 
+  // Wild only: now and then a note slides away as it rings, in cents. Themes never bend.
+  E.bendOf = function (force) {
+    const b = this.style.bend;
+    if (!b || force || this.rnd() >= b) return 0;
+    return [-1200, -500, 700, 1200][Math.floor(this.rnd() * 4)];
+  };
+
   // A sampled note: the nearest take, played faster or slower to land on the pitch. Chips are
   // cut short; far-off hits go through a lowpass.
   E.sampled = function (takes, t0, midi, vel, pan, ins, bus, bright, muted, force) {
@@ -3164,6 +3220,8 @@ registerProcessor('pocket-six', PocketSix);
     g.gain.setValueAtTime(peak, t0);
     let end = t0 + len;
     if (muted) { g.gain.setTargetAtTime(0, t0 + 0.1, 0.07); end = Math.min(end, t0 + 0.6); }
+    const bend = this.bendOf(force);
+    if (bend && src.detune) { src.detune.setValueAtTime(0, t0); src.detune.linearRampToValueAtTime(bend, Math.min(end, t0 + 2.5)); }
     if (!force) this.voices.push(end);
     let at = src;
     if (bright < 0.8) {
@@ -3236,7 +3294,7 @@ registerProcessor('pocket-six', PocketSix);
 
   E.setBpm = function (bpm) {
     this.bpm = bpm;
-    this.stepDur = 60 / bpm / 4;
+    this.stepDur = 60 / (bpm * this.style.speed) / 4;
   };
 
   // The wind moves every half bar: each side's band drifts somewhere new, and now and then a gust.
@@ -3277,7 +3335,8 @@ registerProcessor('pocket-six', PocketSix);
   // ---- bars: chords, mood, and the mix ----
   E.newBar = function (t0, bar, sim, theming) {
     // Patterns turn now and then, so the same swarm never loops. Spin turns them faster.
-    const turn = 0.05 + 0.6 * this.spin;
+    const st = this.style;
+    const turn = Math.max(st.turn || 0, 0.05 + 0.6 * this.spin);
     for (let t = 0; t < NB; t++) if (this.rnd() < turn) this.rot[t] = (this.rot[t] + 1 + Math.floor(this.rnd() * 3)) % STEPS;
     if (sim && !sim.s.found && bar % 2 === 0) {
       let seekers = 0;
@@ -3286,7 +3345,7 @@ registerProcessor('pocket-six', PocketSix);
     }
     if (sim) this.zone = this.zoneOf(sim);
     const zn = this.zone;
-    if (bar % BARS_PER_CHORD === 0 && !theming) {
+    if (bar % st.chordBars === 0 && !theming) {
       const opts = NEXT[this.chord];
       if (bar === 0) this.chord = 0;
       else if (this.tension > 0.45) {
@@ -3297,8 +3356,9 @@ registerProcessor('pocket-six', PocketSix);
       // The rock being dug sets the mode: surface rock bright, deep rock dark.
       let sum = 0, w = 0;
       for (let m = 1; m < this.matRate.length; m++) { sum += this.matRate[m] * MAT_DEPTH[m]; w += this.matRate[m]; }
-      if (w > 0) this.mode = clamp(Math.round(sum / w * 0.6) + zn.tint, 0, MODES.length - 1);
-      this.padChord(t0, this.stepDur * STEPS * BARS_PER_CHORD);
+      if (st.modes) this.mode = Math.floor(this.rnd() * MODES.length);
+      else if (w > 0) this.mode = clamp(Math.round(sum / w * 0.6) + zn.tint, 0, MODES.length - 1);
+      this.padChord(t0, this.stepDur * STEPS * st.chordBars);
       this.retuneDrone(t0);
       // Now and then, in a quiet stretch, the music remembers the theme found so far.
       if (bar % 16 === 8 && this.known() >= 3 && this.tension < 0.3 && this.rnd() < 0.45) {
@@ -3320,7 +3380,7 @@ registerProcessor('pocket-six', PocketSix);
     const room = 1 + (zn.room - 1) * z;
     this.verbOut.gain.setTargetAtTime((0.55 + 0.6 * (1 - z)) * room, t0, 2);
     this.delay.delayTime.setTargetAtTime(this.stepDur * (z > 0.4 ? zn.echo : 3), t0, 0.8);
-    this.fb.gain.setTargetAtTime(0.38 + (zn.fb - 0.38) * z, t0, 1);
+    this.fb.gain.setTargetAtTime(st.fb || 0.38 + (zn.fb - 0.38) * z, t0, 1);
     this.res.frequency.setTargetAtTime(mtof(this.midi(zn.deg)), t0, 1.5);
     this.res.gain.setTargetAtTime(6 * z, t0, 2);
     const bed = this.total > 0.5 ? 0.05 + 0.07 * clamp(Math.log10(1 + this.total) / 3, 0, 1) + 0.006 * lift : 0;
@@ -3439,7 +3499,7 @@ registerProcessor('pocket-six', PocketSix);
     }
   };
 
-  PQ.Audio = { Engine, INST, MODES, ATMOS, hash, euclid, makeTheme };
+  PQ.Audio = { Engine, INST, MODES, ATMOS, STYLES, hash, euclid, makeTheme };
 })();
 
 </script>
@@ -3451,7 +3511,7 @@ registerProcessor('pocket-six', PocketSix);
 (function () {
   const PQ = window.PQ, D = PQ.DATA;
   const $ = id => document.getElementById(id);
-  const DEFAULTS = { sound: true, vol: 0.8, voices: 'dx7', drums: true, gravity: 0.5, spin: 0.3, tilt: false };
+  const DEFAULTS = { sound: true, vol: 0.8, voices: 'dx7', style: 'drift', drums: true, gravity: 0.5, spin: 0.3, tilt: false };
 
   PQ.Music = function (game) {
     const m = { ctx: null, eng: null, seed: null, banks: {}, listening: false };
@@ -3475,7 +3535,7 @@ registerProcessor('pocket-six', PocketSix);
       const ch = PQ.storyChapter ? PQ.storyChapter(depth) : null;
       m.eng = new PQ.Audio.Engine(m.ctx, {
         seed: game.world.seed, depth, fragments: ch ? ch.fragments.length : 10,
-        volume: s.vol, drums: s.drums, gravity: s.gravity, spin: s.spin,
+        volume: s.vol, drums: s.drums, gravity: s.gravity, spin: s.spin, style: s.style,
       });
       m.seed = game.world.seed;
       if (m.rec) m.eng.out.connect(m.rec.dest);
@@ -3520,6 +3580,7 @@ registerProcessor('pocket-six', PocketSix);
       if (key === 'drums') e.drums = v;
       if (key === 'gravity') e.gravity = v;
       if (key === 'spin') e.spin = v;
+      if (key === 'style') e.setStyle(v);
       if (key === 'voices') loadVoices();
       if (key === 'tilt') tilt(v);
     };
@@ -4683,6 +4744,9 @@ registerProcessor('pocket-six', PocketSix);
       <div class="group-h">Music</div>
       <label class="toggle"><input type="checkbox" id="optSound" ${s.settings.sound !== false ? 'checked' : ''}> Music from the balls</label>
       <label class="slider">Volume <input type="range" id="optVol" min="0" max="100" value="${Math.round((s.settings.vol == null ? 0.8 : s.settings.vol) * 100)}"></label>
+      <div class="seg" role="radiogroup" aria-label="Style">${[['drift', 'Drift'], ['tombola', 'Tombola'], ['wild', 'Wild']].map(([k, n]) =>
+        `<label><input type="radio" name="optStyle" value="${k}" ${(s.settings.style || 'drift') === k ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div>
+      <p class="note">Drift: the music keeps its own time and the hits wait for the beat. Tombola: every hit on screen plays the moment it lands. Wild: faster, fuller, leaping and bending.</p>
       <label class="toggle"><input type="checkbox" id="optVoices" ${s.settings.voices !== 'synth' ? 'checked' : ''}> Pocket Six DX7 voices (off: simple synth)</label>
       <label class="toggle"><input type="checkbox" id="optDrums" ${s.settings.drums !== false ? 'checked' : ''}> Drums: Bombs play taiko, clearing ground brings a heartbeat</label>
       <label class="slider">Gravity <input type="range" id="optGravity" min="0" max="100" value="${Math.round((s.settings.gravity == null ? 0.5 : s.settings.gravity) * 100)}"></label>
@@ -4797,6 +4861,7 @@ registerProcessor('pocket-six', PocketSix);
       if (id === 'optVoices') mu.set('voices', e.target.checked ? 'dx7' : 'synth');
       if (id === 'optDrums') mu.set('drums', e.target.checked);
       if (id === 'optTilt') mu.set('tilt', e.target.checked);
+      if (e.target.name === 'optStyle') mu.set('style', e.target.value);
     });
     $('sheetBody').addEventListener('input', e => {
       const mu = this.g.music, id = e.target.id;
@@ -5131,7 +5196,7 @@ registerProcessor('pocket-six', PocketSix);
 // Pixel Quarry Sound: boot, game loop, autosave, and the music.
 (function () {
   const PQ = window.PQ, D = PQ.DATA;
-  const BUILD = '20261026-083130';                       // build.py stamps the build time here
+  const BUILD = '20261026-085606';                       // build.py stamps the build time here
   const $ = id => document.getElementById(id);
   const canvas = $('world');
   const yieldFrame = () => new Promise(r => setTimeout(r, 0));
