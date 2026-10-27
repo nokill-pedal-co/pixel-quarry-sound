@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Pixel Quarry Sound</title>
+<title>Stonesong</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="description" content="Pixel Quarry that plays itself as music: every ball an instrument, every pixel a note.">
+<meta name="description" content="A quarry that plays itself as music: every ball an instrument, every pixel a note.">
 <meta name="theme-color" content="#080b09">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="PQ Sound">
+<meta name="apple-mobile-web-app-title" content="Stonesong">
 <link rel="manifest" href="manifest.webmanifest"><!--pwa-->
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png"><!--pwa-->
 <link rel="icon" type="image/png" href="icons/icon-192.png"><!--pwa-->
@@ -442,7 +442,19 @@ textarea {
 .row.locked .buy.afford .cost { color: var(--dia); }
 .row.locked .buy.afford { border-color: rgba(255, 64, 224, 0.6); }
 
-/* Pixel Quarry Sound */
+/* Stonesong */
+.tombola { width: 192px; height: 192px; max-width: 52vw; max-height: 52vw; image-rendering: pixelated; image-rendering: crisp-edges; }
+#loadHint { margin: -8px 0 0; color: var(--muted); font-size: 13px; opacity: 0.7; }
+.voices { margin-top: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.voices summary { list-style: none; }
+.voices summary::-webkit-details-marker { display: none; }
+.voices summary { min-height: 44px; display: flex; align-items: center; font-size: 14px; cursor: pointer; color: var(--ink); }
+.voices summary::after { content: '+'; margin-left: auto; color: var(--muted); font: 500 20px var(--display); }
+.voices[open] summary::after { content: '\2212'; }
+.voice-row { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; }
+.vdot { width: 10px; height: 10px; flex: none; }
+.voice-name { flex: 1; min-width: 0; }
+.voice-row select { flex: 0 1 58%; min-width: 0; min-height: 36px; padding: 0 8px; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 .seg { display: flex; gap: 6px; margin-top: 4px; }
 .seg label { flex: 1; }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
@@ -451,7 +463,9 @@ textarea {
 .seg input:focus-visible + span { outline: 2px solid var(--gold); outline-offset: 2px; }
 .slider { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 14px; }
 .slider input { flex: 1; accent-color: var(--gold); }
-.logo small { display: block; margin-top: 8px; font-size: 18px; letter-spacing: 0.3em; color: var(--dia); text-align: center; }
+.logo { text-align: center; }
+.logo b { margin-left: 0; }
+.logo small { display: block; margin-top: 10px; font-size: 16px; letter-spacing: 0.18em; color: var(--muted); text-transform: lowercase; }
 .mini-btns { flex-wrap: wrap; }
 #btnListen { border-color: var(--dia); color: var(--dia); }
 
@@ -523,11 +537,116 @@ body.listening .hud > * { pointer-events: none; }
 <div class="modal" id="modal" hidden><div class="card" id="modalCard" role="dialog" aria-modal="true"></div></div>
 
 <div class="loading" id="loading">
-  <div class="logo">Pixel<b>Quarry</b> <small>Sound</small></div>
+  <canvas class="tombola" id="tombola" width="64" height="64" aria-hidden="true"></canvas>
+  <div class="logo">Stone<b>song</b> <small>the quarry plays itself</small></div>
   <div class="bar"><i id="loadBar"></i></div>
-  <p id="loadText">Generating 10,000,000 pixels</p>
+  <p id="loadText">Tuning 10,000,000 pixels</p>
+  <p id="loadHint">Best with headphones</p>
 </div>
 
+<script>
+// Stonesong: the loading screen's Tombola. A slowly turning octagon whose eight walls are eight
+// of the quarry's rocks, with a few balls falling and bouncing inside; a wall lights up when a
+// ball strikes it. Drawn into a 64 x 64 canvas and scaled up with hard pixel edges. Silent:
+// the music can only start after the first tap.
+(function () {
+  const PQ = window.PQ = window.PQ || {};
+  const N = 64, C = 32, R = 27;                          // canvas size, centre, octagon radius (to a corner)
+  const AP = R * Math.cos(Math.PI / 8);                  // apothem: centre to the middle of a wall
+  const GROUND = [8, 11, 9];
+  const WALLS = [[70, 230, 96], [166, 236, 64], [244, 222, 60], [255, 154, 40],
+    [236, 64, 52], [255, 64, 224], [168, 112, 255], [64, 224, 228]];
+  const BALLS = [[255, 214, 64], [233, 228, 214], [56, 200, 255]];
+  const SPIN = 0.22, GRAV = 26;                          // rad/s, px/s²
+
+  let raf = 0, ctx = null, img = null, last = 0, ang = 0;
+  const flash = new Float32Array(8);
+  let balls = [];
+
+  function mix(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]; }
+
+  function px(x, y, col, a) {
+    x |= 0; y |= 0;
+    if (x < 0 || y < 0 || x >= N || y >= N) return;
+    const d = img.data, o = (y * N + x) * 4;
+    d[o] += (col[0] - d[o]) * a; d[o + 1] += (col[1] - d[o + 1]) * a; d[o + 2] += (col[2] - d[o + 2]) * a;
+  }
+  function line(x0, y0, x1, y1, col, a) {
+    const n = Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)));
+    for (let i = 0; i <= n; i++) px(Math.round(x0 + (x1 - x0) * i / n), Math.round(y0 + (y1 - y0) * i / n), col, a);
+  }
+  const corner = k => { const a = ang + Math.PI / 8 + k * Math.PI / 4 - Math.PI / 2; return [C + Math.cos(a) * R, C + Math.sin(a) * R]; };
+  const normal = k => { const a = ang + (k + 1) * Math.PI / 4 - Math.PI / 2; return [Math.cos(a), Math.sin(a)]; };
+
+  function step(dt) {
+    ang += SPIN * dt;
+    for (let k = 0; k < 8; k++) flash[k] *= Math.exp(-dt * 2.2);
+    for (const b of balls) {
+      b.vy += GRAV * dt;
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      for (let k = 0; k < 8; k++) {
+        const [nx, ny] = normal(k), d = (b.x - C) * nx + (b.y - C) * ny - (AP - 1.5);
+        if (d <= 0) continue;
+        const vn = b.vx * nx + b.vy * ny;
+        b.x -= nx * d; b.y -= ny * d;
+        if (vn > 0) {
+          b.vx -= 2 * vn * nx; b.vy -= 2 * vn * ny;
+          // A little kick along the wall as it turns, so the balls never settle.
+          b.vx += -ny * SPIN * AP * 0.6; b.vy += nx * SPIN * AP * 0.6;
+          const s = Math.hypot(b.vx, b.vy);
+          if (s > 46) { b.vx *= 46 / s; b.vy *= 46 / s; }
+          flash[k] = 1;
+        }
+      }
+      b.trail.unshift(b.x, b.y);
+      if (b.trail.length > 8) b.trail.length = 8;
+    }
+  }
+
+  function draw() {
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) { d[i] = GROUND[0]; d[i + 1] = GROUND[1]; d[i + 2] = GROUND[2]; d[i + 3] = 255; }
+    for (let k = 0; k < 8; k++) {
+      const [x0, y0] = corner(k), [x1, y1] = corner(k + 1), f = flash[k];
+      if (f > 0.05) {                                    // the struck wall glows inward
+        const [nx, ny] = normal(k);
+        line(x0 - nx, y0 - ny, x1 - nx, y1 - ny, WALLS[k], 0.35 * f);
+        line(x0 - 2 * nx, y0 - 2 * ny, x1 - 2 * nx, y1 - 2 * ny, WALLS[k], 0.15 * f);
+      }
+      line(x0, y0, x1, y1, mix(mix(WALLS[k], GROUND, 0.3), WALLS[k], f), 1);
+    }
+    for (const b of balls) {
+      for (let i = 2; i < b.trail.length; i += 2) px(b.trail[i], b.trail[i + 1], b.col, 0.5 * (1 - i / b.trail.length));
+      px(b.x, b.y, b.col, 1); px(b.x + 1, b.y, b.col, 1); px(b.x, b.y + 1, b.col, 1); px(b.x + 1, b.y + 1, b.col, 1);
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  function frame(t) {
+    const dt = Math.min(0.05, last ? (t - last) / 1000 : 0);
+    last = t;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(frame);
+  }
+
+  PQ.Tombola = {
+    start(canvas) {
+      if (raf || !canvas || !canvas.getContext) return;
+      ctx = canvas.getContext('2d');
+      img = ctx.createImageData(N, N);
+      balls = BALLS.map((col, i) => ({ col, x: C - 8 + i * 8, y: C - 6 + i * 3, vx: (i - 1) * 14 + 6, vy: -10 * i, trail: [] }));
+      last = 0;
+      const still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (still) { for (let i = 0; i < 40; i++) step(0.05); draw(); return; }
+      raf = requestAnimationFrame(frame);
+    },
+    stop() { if (raf) cancelAnimationFrame(raf); raf = 0; },
+  };
+})();
+
+</script>
+<script>PQ.Tombola.start(document.getElementById('tombola'));</script>
 <script>
 // Pixel Quarry: all tables and constants. No logic lives here.
 (function () {
@@ -2509,7 +2628,7 @@ registerProcessor('pocket-six', PocketSix);
 
 </script>
 <script>
-// Pixel Quarry Sound: Pocket Six's DX7 voices, sampled on the device. The picks live in
+// Stonesong: Pocket Six's DX7 voices, sampled on the device. The picks live in
 // dx7voices.js (one palette per kind of world) and the engine is Pocket Six's own FM code
 // (pocketsix-dsp.js). Each voice is played once per octave into a buffer, a second or two of
 // work spread over frames; after that a note is just a buffer played at the right speed, so a
@@ -2538,61 +2657,100 @@ registerProcessor('pocket-six', PocketSix);
   async function sample(ctx, palette, onProgress) {
     const FM = root.FM_DSP;
     if (!FM) throw new Error('Pocket Six engine missing');
-    const sr = ctx.sampleRate, p = makeProc(FM, sr);
-    const L = new Float32Array(128), R = new Float32Array(128), outs = [[L, R]];
-    const roles = Object.keys(palette.voices), out = {};
-    let done = 0, last = now();
-    for (const role of roles) {
-      const patch = palette.voices[role];
-      p.msg({ t: 'panic' });
-      p.msg({ t: 'poly', n: 2 });
-      p.msg({ t: 'patch', p: patch });
-      p.fx = null;                                           // dry: the game has its own room and echo
-      const shift = (patch.trnp == null ? 24 : patch.trnp) - 24;
-      const takes = [];
-      let peak = 0;
-      for (const m of ROOTS) {
-        const hold = (HOLD[role] || 0.25) * sr, max = Math.floor((MAX[role] || 3) * sr);
-        const data = new Float32Array(max);
-        let n = 0, quiet = 0, off = false;
-        p.msg({ t: 'on', note: m, vel: 0.85 });
-        while (n < max) {
-          p.process(null, outs);
-          const k = Math.min(128, max - n);
-          let pk = 0;
-          for (let i = 0; i < k; i++) { data[n + i] = L[i]; const a = Math.abs(L[i]); if (a > pk) pk = a; }
-          n += k;
-          if (pk > peak) peak = pk;
-          if (!off && n >= hold) { p.msg({ t: 'off', note: m }); off = true; }
-          if (off) { quiet = pk < 2e-4 ? quiet + k : 0; if (quiet > sr * 0.05) break; }
-          if (now() - last > 24) { await pause(); last = now(); }
-        }
-        p.msg({ t: 'panic' });
-        for (let i = 0; i < 4; i++) p.process(null, outs);
-        takes.push({ root: m + shift, data: data.subarray(0, n) });
-        if (onProgress) onProgress(++done / (roles.length * ROOTS.length));
-      }
-      const mid = takes.find(t => t.root - shift === 60) || takes[0], win = Math.min(mid.data.length, Math.floor(sr * 1.5));
-      let ss = 0;
-      for (let i = 0; i < win; i++) ss += mid.data[i] * mid.data[i];
-      const rms = Math.sqrt(ss / Math.max(1, win));
-      const g = rms > 0 ? Math.min(0.1 / rms, 3 / Math.max(peak, 1e-9)) : 1, fade = Math.floor(sr * 0.02);
-      out[role] = takes.map(t => {
-        const buf = ctx.createBuffer(1, t.data.length, sr), d = buf.getChannelData(0);
-        for (let i = 0; i < t.data.length; i++) d[i] = t.data[i] * g;
-        for (let i = 0; i < fade && i < d.length; i++) d[d.length - 1 - i] *= i / fade;
-        return { root: t.root, buf };
-      });
-    }
+    const p = makeProc(FM, ctx.sampleRate), roles = Object.keys(palette.voices), out = {};
+    let done = 0;
+    const tick = () => { if (onProgress) onProgress(++done / (roles.length * ROOTS.length)); };
+    for (const role of roles) out[role] = await takesOf(ctx, p, palette.voices[role], role, tick);
     return out;
   }
 
-  PQ.DX7 = { sample, ROOTS };
+  // Sample a single patch, played the way `role` plays (how long the key is held), for a ball
+  // the player gave a voice of its own.
+  async function sampleVoice(ctx, patch, role) {
+    const FM = root.FM_DSP;
+    if (!FM) throw new Error('Pocket Six engine missing');
+    return takesOf(ctx, makeProc(FM, ctx.sampleRate), patch, role);
+  }
+
+  // Every voice in the palettes, once each, for the per-ball picker. id is the patch's source
+  // (stable across rebuilds of dx7voices.js); role is the one it was picked for, which sets how
+  // it is played and how loud it sits; group is a family name for the menu.
+  const FAMILY = { pebble: 'Mallets', lancer: 'Harps and plucks', bomb: 'Drums', venom: 'Voices and pads',
+    spark: 'Chimes and glass', midas: 'Bells', drill: 'Strings', seeker: 'Winds', tap: 'Keys' };
+  function pretty(name) {
+    return name.replace(/\s+/g, ' ').trim().replace(/\bSECN\b/, 'SECTION').split(' ')
+      .map(w => w.length <= 2 || /\d/.test(w) ? w : w.toLowerCase().replace(/(^|[.-])(\w)/g, (_, a, b) => a + b.toUpperCase())).join(' ');
+  }
+  let cat = null;
+  function catalog() {
+    if (cat) return cat;
+    cat = [];
+    const names = {};
+    for (const pal of root.PQ.DX7_PALETTES || []) {
+      for (const role in pal.voices) {
+        const patch = pal.voices[role], id = patch.from || pal.name + ':' + role;
+        if (cat.some(v => v.id === id)) continue;
+        let name = pretty(patch.name || role);
+        const key = name.toLowerCase();
+        names[key] = (names[key] || 0) + 1;
+        if (names[key] > 1) name += ' ' + names[key];
+        cat.push({ id, name, role, group: FAMILY[role] || 'Other', patch });
+      }
+    }
+    return cat;
+  }
+
+  async function takesOf(ctx, p, patch, role, tick) {
+    const sr = ctx.sampleRate;
+    const L = new Float32Array(128), R = new Float32Array(128), outs = [[L, R]];
+    let last = now();
+    p.msg({ t: 'panic' });
+    p.msg({ t: 'poly', n: 2 });
+    p.msg({ t: 'patch', p: patch });
+    p.fx = null;                                           // dry: the game has its own room and echo
+    const shift = (patch.trnp == null ? 24 : patch.trnp) - 24;
+    const takes = [];
+    let peak = 0;
+    for (const m of ROOTS) {
+      const hold = (HOLD[role] || 0.25) * sr, max = Math.floor((MAX[role] || 3) * sr);
+      const data = new Float32Array(max);
+      let n = 0, quiet = 0, off = false;
+      p.msg({ t: 'on', note: m, vel: 0.85 });
+      while (n < max) {
+        p.process(null, outs);
+        const k = Math.min(128, max - n);
+        let pk = 0;
+        for (let i = 0; i < k; i++) { data[n + i] = L[i]; const a = Math.abs(L[i]); if (a > pk) pk = a; }
+        n += k;
+        if (pk > peak) peak = pk;
+        if (!off && n >= hold) { p.msg({ t: 'off', note: m }); off = true; }
+        if (off) { quiet = pk < 2e-4 ? quiet + k : 0; if (quiet > sr * 0.05) break; }
+        if (now() - last > 24) { await pause(); last = now(); }
+      }
+      p.msg({ t: 'panic' });
+      for (let i = 0; i < 4; i++) p.process(null, outs);
+      takes.push({ root: m + shift, data: data.subarray(0, n) });
+      if (tick) tick();
+    }
+    const mid = takes.find(t => t.root - shift === 60) || takes[0], win = Math.min(mid.data.length, Math.floor(sr * 1.5));
+    let ss = 0;
+    for (let i = 0; i < win; i++) ss += mid.data[i] * mid.data[i];
+    const rms = Math.sqrt(ss / Math.max(1, win));
+    const g = rms > 0 ? Math.min(0.1 / rms, 3 / Math.max(peak, 1e-9)) : 1, fade = Math.floor(sr * 0.02);
+    return takes.map(t => {
+      const buf = ctx.createBuffer(1, t.data.length, sr), d = buf.getChannelData(0);
+      for (let i = 0; i < t.data.length; i++) d[i] = t.data[i] * g;
+      for (let i = 0; i < fade && i < d.length; i++) d[d.length - 1 - i] *= i / fade;
+      return { root: t.root, buf };
+    });
+  }
+
+  PQ.DX7 = { sample, sampleVoice, catalog, ROOTS };
 })();
 
 </script>
 <script>
-// Pixel Quarry Sound: the music. Every ball type is an instrument and every pixel is a note.
+// Stonesong: the music. Every ball type is an instrument and every pixel is a note.
 // A pixel's note is fixed by where it sits (a hash of x, y) and how high it rings by what it is
 // made of; the instrument comes from the ball that hit it. Nothing plays the moment it is hit:
 // hits pile up and a conductor lets each instrument speak on its own slowly-turning rhythm
@@ -2774,6 +2932,7 @@ registerProcessor('pocket-six', PocketSix);
     this.queue = [];                                     // flourishes waiting for the next step
     this.waiting = [];                                   // big moments waiting for a theme to finish
     this.bank = null;                                    // sampled DX7 voices, once ready
+    this.voiceFor = {};                                  // role: the player's own choice (setVoice)
     // The player's hands on it: drums, and the Tombola's gravity (how dense) and spin (how fast
     // the patterns turn), plus tilt (the whole field leans left or right).
     this.drums = opts.drums !== false;
@@ -2953,6 +3112,18 @@ registerProcessor('pocket-six', PocketSix);
 
   // The sampled voices, when dx7.js has them ready. Until then the synth voices play.
   E.setBank = function (bank) { this.bank = bank; };
+
+  // A ball type's own voice, chosen by the player: sampled takes (with a level relative to the
+  // role's own), 'synth', 'off' (silent), or null to follow the world's palette.
+  E.setVoice = function (role, v, level) { this.voiceFor[role] = v ? { v, level: level || 1 } : null; };
+
+  // Let a ball type be heard on its own for a moment: the chord, rising.
+  E.preview = function (t) {
+    const ins = INST[t], own = this.voiceFor[ins.name];
+    if (own && own.v === 'off') return;
+    const t0 = this.ctx.currentTime + 0.05;
+    [0, 2, 4, 7].forEach((o, i) => this.note(t0 + i * 0.24, this.midi(this.chord + o + 7 * ins.oct), 0.85, (i - 1.5) * 0.3, ins, t, 1, false, true));
+  };
 
   // The pickaxe plays straight away: it answers the finger.
   E.tap = function (x, y, mat) {
@@ -3155,7 +3326,11 @@ registerProcessor('pocket-six', PocketSix);
   // against the cap, which is there to keep the swarm in check.
   E.note = function (t0, midi, vel, pan, ins, bus, bright, muted, force) {
     if (this.voices.length >= MAX_VOICES && !force) return;
-    const s = this.bank && this.bank[ins.name];
+    // The player's choice for this ball type first (themes ignore 'off': they always sound).
+    const own = this.voiceFor[ins.name];
+    if (own && own.v === 'off' && !force) return;
+    if (own && Array.isArray(own.v)) return this.sampled(own.v, t0, midi, vel * own.level, pan, ins, bus, bright, muted, force);
+    const s = !(own && own.v === 'synth') && this.bank && this.bank[ins.name];
     if (s) return this.sampled(s, t0, midi, vel, pan, ins, bus, bright, muted, force);
     const ctx = this.ctx, f = mtof(midi);
     const dec = ins.d * (muted ? 0.45 : 1);
@@ -3504,7 +3679,7 @@ registerProcessor('pocket-six', PocketSix);
 
 </script>
 <script>
-// Pixel Quarry Sound: everything between the game and the music engine (audio.js).
+// Stonesong: everything between the game and the music engine (audio.js).
 // Starting audio on the first tap, one engine per world (fading the last one out), Pocket Six
 // voices sampled in the background, the sound settings, tilt, playing along with a finger,
 // and Listen mode: the screen to itself, the camera drifting, a sleep timer and a recorder.
@@ -3518,6 +3693,7 @@ registerProcessor('pocket-six', PocketSix);
     const st = () => {
       const s = game.state.settings;
       for (const k in DEFAULTS) if (s[k] == null) s[k] = DEFAULTS[k];
+      if (!s.voiceFor) s.voiceFor = {};                    // ball type: 'auto' | 'synth' | 'off' | voice id
       return s;
     };
     const on = () => !!game.state && st().sound !== false;
@@ -3541,6 +3717,7 @@ registerProcessor('pocket-six', PocketSix);
       if (m.rec) m.eng.out.connect(m.rec.dest);
       game.sim.snd = on() ? m.eng : null;
       loadVoices();
+      for (const role in st().voiceFor) applyVoice(role);
     }
     // Pocket Six's voices for this kind of world, sampled once per visit and kept.
     function loadVoices() {
@@ -3549,6 +3726,39 @@ registerProcessor('pocket-six', PocketSix);
       if (!m.banks[pal]) m.banks[pal] = PQ.DX7.sample(m.ctx, PQ.DX7_PALETTES[pal]).catch(() => null);
       m.banks[pal].then(bank => { if (m.eng === eng && st().voices === 'dx7') eng.setBank(bank); });
     }
+    // ---- each ball type's own voice ----
+    // Any voice from any palette, sampled on first use and kept for the session. 'auto' follows
+    // the world; a picked voice sits at a level between its own role's and this ball type's.
+    m.custom = {};
+    const INST = PQ.Audio.INST, roleOf = r => INST.find(i => i.name === r);
+    function applyVoice(role) {
+      const eng = m.eng, want = st().voiceFor[role] || 'auto';
+      if (!eng) return Promise.resolve();
+      if (want === 'auto') { eng.setVoice(role, null); return Promise.resolve(); }
+      if (want === 'off' || want === 'synth') { eng.setVoice(role, want); return Promise.resolve(); }
+      const v = PQ.DX7 && window.FM_DSP && PQ.DX7.catalog().find(c => c.id === want);
+      if (!v) { eng.setVoice(role, null); return Promise.resolve(); }
+      if (!m.custom[want]) m.custom[want] = PQ.DX7.sampleVoice(m.ctx, v.patch, v.role).catch(() => null);
+      return m.custom[want].then(takes => {
+        if (m.eng !== eng || st().voiceFor[role] !== want) return;
+        const level = Math.sqrt(roleOf(v.role).samp / roleOf(role).samp);
+        eng.setVoice(role, takes, level);
+      });
+    }
+    // Change one ball type's voice, then let it play a few notes alone so it can be heard.
+    m.setVoice = function (role, id) {
+      st().voiceFor[role] = id;
+      if (!m.eng) return;
+      applyVoice(role).then(() => { if (m.eng && on()) m.eng.preview(INST.findIndex(i => i.name === role)); });
+    };
+    // What 'auto' plays for a ball type in this world, for the menu.
+    m.autoName = function (role) {
+      if (st().voices !== 'dx7' || !PQ.DX7) return 'simple synth';
+      const pal = PQ.DX7_PALETTES[(game.state.depth || 0) % PQ.DX7_PALETTES.length], p = pal && pal.voices[role];
+      const v = p && PQ.DX7.catalog().find(c => c.id === p.from);
+      return v ? v.name : 'this world’s';
+    };
+
     m.start = function () {
       if (!game.sim || !on()) return;
       try {
@@ -3751,7 +3961,7 @@ registerProcessor('pocket-six', PocketSix);
     };
     async function save(blob, ext, t0) {
       const d = new Date(t0), pad = n => String(n).padStart(2, '0');
-      const base = `Pixel Quarry Sound ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`;
+      const base = `Stonesong ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`;
       const name = `${base}.${ext}`;
       // Inside the claude.ai viewer, files leave through its downloads capability (which takes
       // .mp4, not .m4a: the same audio either way). Elsewhere: the share sheet, or a download.
@@ -4316,7 +4526,7 @@ registerProcessor('pocket-six', PocketSix);
 <script>
 // Pixel Quarry: touch and mouse. One finger pans, two fingers pinch-zoom,
 // a tap acts on the world, and holding still on rock keeps digging.
-// Pixel Quarry Sound: a hold also starts a drone (holdStart / holdEnd), and once held, sliding
+// Stonesong: a hold also starts a drone (holdStart / holdEnd), and once held, sliding
 // the finger plays the pixels it crosses (slide) and keeps digging under it instead of panning.
 (function () {
   const root = typeof window !== 'undefined' ? window : globalThis;
@@ -4558,7 +4768,7 @@ registerProcessor('pocket-six', PocketSix);
 
   async function importCode(code) {
     const text = String(code || '').trim();
-    if (!text.startsWith('PQ1:')) throw new Error('That is not a Pixel Quarry save code. Codes start with PQ1:');
+    if (!text.startsWith('PQ1:')) throw new Error('That is not a Stonesong save code. Codes start with PQ1:');
     let j;
     try { j = JSON.parse(new TextDecoder().decode(unb64(text.slice(4)))); } catch (e) { throw new Error('The save code is incomplete. Copy the whole code and try again.'); }
     if (!j.meta || typeof j.meta.seed !== 'number') throw new Error('The save code has no game in it.');
@@ -4716,6 +4926,28 @@ registerProcessor('pocket-six', PocketSix);
     return parts.join(' ');
   };
 
+  // Ball sounds: one menu per ball type (and the pickaxe), any Pocket Six voice, the plain synth,
+  // or silent. Auto follows the world's own palette.
+  U.voicePicker = function (s) {
+    const mu = this.g.music, cat = PQ.DX7 ? PQ.DX7.catalog() : [], mine = s.settings.voiceFor || {};
+    const groups = [];
+    for (const v of cat) { let g = groups.find(x => x.name === v.group); if (!g) groups.push(g = { name: v.group, list: [] }); g.list.push(v); }
+    const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const rows = D.BALLS.map(b => ({ key: b.key, name: b.name, color: b.color })).concat([{ key: 'tap', name: 'Pickaxe', color: '#6dff7c' }]);
+    const opt = (val, label, cur) => `<option value="${esc(val)}" ${cur === val ? 'selected' : ''}>${esc(label)}</option>`;
+    return `<details class="voices"${this.voicesOpen ? ' open' : ''}><summary>Ball sounds</summary>
+      ${rows.map(r => {
+        const cur = mine[r.key] || 'auto';
+        return `<label class="voice-row"><span class="vdot" style="background:${r.color}"></span><span class="voice-name">${r.name}</span>
+          <select data-voice="${r.key}" aria-label="${r.name} sound">
+            ${opt('auto', 'Auto (' + (mu ? mu.autoName(r.key) : 'this world’s') + ')', cur)}${opt('synth', 'Simple synth', cur)}${opt('off', 'Silent', cur)}
+            ${groups.map(g => `<optgroup label="${esc(g.name)}">${g.list.map(v => opt(v.id, v.name, cur)).join('')}</optgroup>`).join('')}
+          </select></label>`;
+      }).join('')}
+      <p class="note">Pick any of the Pocket Six voices for a ball type; it plays a few notes so you can hear it. Auto changes with each world. Themes still play when a ball is silent.</p>
+    </details>`;
+  };
+
   U.buildWorld = function () {
     const s = this.g.state;
     const c = this.confirm;
@@ -4747,6 +4979,7 @@ registerProcessor('pocket-six', PocketSix);
       <div class="seg" role="radiogroup" aria-label="Style">${[['drift', 'Drift'], ['tombola', 'Tombola'], ['wild', 'Wild']].map(([k, n]) =>
         `<label><input type="radio" name="optStyle" value="${k}" ${(s.settings.style || 'drift') === k ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div>
       <p class="note">Drift: the music keeps its own time and the hits wait for the beat. Tombola: every hit on screen plays the moment it lands. Wild: faster, fuller, leaping and bending.</p>
+      ${this.voicePicker(s)}
       <label class="toggle"><input type="checkbox" id="optVoices" ${s.settings.voices !== 'synth' ? 'checked' : ''}> Pocket Six DX7 voices (off: simple synth)</label>
       <label class="toggle"><input type="checkbox" id="optDrums" ${s.settings.drums !== false ? 'checked' : ''}> Drums: Bombs play taiko, clearing ground brings a heartbeat</label>
       <label class="slider">Gravity <input type="range" id="optGravity" min="0" max="100" value="${Math.round((s.settings.gravity == null ? 0.5 : s.settings.gravity) * 100)}"></label>
@@ -4862,7 +5095,10 @@ registerProcessor('pocket-six', PocketSix);
       if (id === 'optDrums') mu.set('drums', e.target.checked);
       if (id === 'optTilt') mu.set('tilt', e.target.checked);
       if (e.target.name === 'optStyle') mu.set('style', e.target.value);
+      if (e.target.dataset.voice) mu.setVoice(e.target.dataset.voice, e.target.value);
     });
+    // The Ball sounds list stays open across redraws of the World tab.
+    $('sheetBody').addEventListener('toggle', e => { if (e.target.classList.contains('voices')) this.voicesOpen = e.target.open; }, true);
     $('sheetBody').addEventListener('input', e => {
       const mu = this.g.music, id = e.target.id;
       if (!mu) return;
@@ -5193,10 +5429,10 @@ registerProcessor('pocket-six', PocketSix);
 
 </script>
 <script>
-// Pixel Quarry Sound: boot, game loop, autosave, and the music.
+// Stonesong: boot, game loop, autosave, and the music.
 (function () {
   const PQ = window.PQ, D = PQ.DATA;
-  const BUILD = '20261026-085606';                       // build.py stamps the build time here
+  const BUILD = '20261027-143243';                       // build.py stamps the build time here
   const $ = id => document.getElementById(id);
   const canvas = $('world');
   const yieldFrame = () => new Promise(r => setTimeout(r, 0));
@@ -5225,7 +5461,8 @@ registerProcessor('pocket-six', PocketSix);
   async function boot(state, restore) {
     game.running = false;
     $('loading').hidden = false;
-    progress(0, 'Generating 10,000,000 pixels');
+    PQ.Tombola.start($('tombola'));
+    progress(0, 'Tuning 10,000,000 pixels');
     await yieldFrame();
 
     const world = PQ.World.create(state.seed, state.depth);
@@ -5274,6 +5511,7 @@ registerProcessor('pocket-six', PocketSix);
     game.ui.refresh();
 
     $('loading').hidden = true;
+    PQ.Tombola.stop();
     game.running = true;
   }
 
@@ -5386,7 +5624,7 @@ registerProcessor('pocket-six', PocketSix);
       if (!armed) return;
       armed = false; warnedAt = Date.now();
       saveAll();
-      if (game.ui) game.ui.toast('Swipe back again to close Pixel Quarry Sound.', 2500);
+      if (game.ui) game.ui.toast('Swipe back again to close Stonesong.', 2500);
     });
   }
 

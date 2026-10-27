@@ -1,13 +1,13 @@
 {
-  "name": "Pixel Quarry Sound",
-  "short_name": "PQ Sound",
-  "description": "Pixel Quarry that plays itself as music: every ball an instrument, every pixel a note.",
+  "name": "Stonesong",
+  "short_name": "Stonesong",
+  "description": "A quarry that plays itself as music: every ball an instrument, every pixel a note.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0f0d15",
-  "theme_color": "#0f0d15",
+  "background_color": "#080b09",
+  "theme_color": "#080b09",
   "categories": ["games"],
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },

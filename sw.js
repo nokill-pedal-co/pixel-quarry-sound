@@ -1,6 +1,6 @@
 // Pixel Quarry service worker: cache the game so it opens offline.
 // build.py stamps VERSION so every build replaces the old cache.
-const VERSION = '20261026-085606';
+const VERSION = '20261027-143243';
 const CACHE = 'pqsound-' + VERSION;
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
