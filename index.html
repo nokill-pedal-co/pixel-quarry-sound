@@ -443,6 +443,10 @@ textarea {
 .row.locked .buy.afford { border-color: rgba(255, 64, 224, 0.6); }
 
 /* Stonesong */
+.fx-live { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; max-width: 60vw; }
+.fx-live:empty { display: none; }
+.fx-chip { padding: 2px 7px; border: 1px solid var(--c); color: var(--c); font: 500 14px/1.3 var(--display); background: rgba(8, 11, 9, 0.7); font-variant-numeric: tabular-nums; }
+.row.fx .prog i { background: var(--c); }
 .tombola { width: 192px; height: 192px; max-width: 52vw; max-height: 52vw; image-rendering: pixelated; image-rendering: crisp-edges; }
 #loadHint { margin: -8px 0 0; color: var(--muted); font-size: 13px; opacity: 0.7; }
 .voices { margin-top: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -483,6 +487,7 @@ body.listening .hud > * { pointer-events: none; }
 .listen-bar[hidden] { display: none; }
 .listen-bar .chip { min-height: 44px; padding: 0 14px; font-size: 14px; white-space: nowrap; }
 .listen-bar .chip.on { border-color: #ff5a48; color: #ff5a48; }
+@media (max-width: 400px) { .tabs button { padding: 0 6px; font-size: 15px; } }
 
 </style>
 </head>
@@ -498,6 +503,7 @@ body.listening .hud > * { pointer-events: none; }
       <span class="heat"><i id="heat"></i></span>
       <span id="radarText">Cold</span>
     </div>
+    <div class="fx-live" id="fxLive" aria-live="polite"></div>
     <button class="chip deeper" id="btnDeeper" type="button" hidden>Go deeper</button>
   </div>
   <div class="hud-right">
@@ -516,6 +522,7 @@ body.listening .hud > * { pointer-events: none; }
       <button type="button" role="tab" id="tab-balls" data-tab="balls" aria-selected="true">Balls<span class="dot" id="ballDot" hidden></span></button>
       <button type="button" role="tab" id="tab-tree" data-tab="tree" aria-selected="false">Tree<span class="dot" id="treeDot" hidden></span></button>
       <button type="button" role="tab" id="tab-stars" data-tab="stars" aria-selected="false">Stars<span class="dot" id="starDot" hidden></span></button>
+      <button type="button" role="tab" id="tab-effects" data-tab="effects" aria-selected="false">Effects</button>
       <button type="button" role="tab" id="tab-world" data-tab="world" aria-selected="false">World</button>
     </nav>
     <button type="button" class="grip" id="grip" aria-label="Hide shop" aria-expanded="true"></button>
@@ -524,6 +531,7 @@ body.listening .hud > * { pointer-events: none; }
     <div class="panel" id="panel-balls" role="tabpanel"></div>
     <div class="panel" id="panel-tree" role="tabpanel" hidden></div>
     <div class="panel" id="panel-stars" role="tabpanel" hidden></div>
+    <div class="panel" id="panel-effects" role="tabpanel" hidden></div>
     <div class="panel" id="panel-world" role="tabpanel" hidden></div>
   </div>
 </section>
@@ -787,6 +795,21 @@ body.listening .hud > * { pointer-events: none; }
       { key: 'relic', name: 'Curator', costs: [1, 2, 3], vals: [1, 2, 3, 4],
         desc: 'Relics pay {v}x.' },
     ],
+
+    // Timed world effects (Effects tab), paid in bits. Priced in seconds of current income
+    // (price) so they stay dear at any stage, never below min, and each buy in a world costs
+    // EFFECT_GROW times the one before. secs: how long one lasts (0 = happens at once).
+    EFFECTS: [
+      { key: 'rush',   name: 'Overdrive',       secs: 20, price: 90,  min: 1500, color: '#ff9b2e', desc: 'Every ball moves three times as fast.' },
+      { key: 'recall', name: 'Recall',          secs: 0,  price: 45,  min: 800,  color: '#e9e4d6', desc: 'Every ball flies home to the launcher and fires out again, all at once.' },
+      { key: 'whirl',  name: 'Whirlpool',       secs: 15, price: 60,  min: 1000, color: '#38c8ff', desc: 'Balls spiral around the middle of your screen.' },
+      { key: 'shine',  name: 'Golden Hour',     secs: 20, price: 180, min: 3000, color: '#ffd640', desc: 'Every pixel pays triple.' },
+      { key: 'glass',  name: 'Glass Rock',      secs: 12, price: 120, min: 2000, color: '#b8f4ff', desc: 'The rock turns brittle: every hit does five times the damage.' },
+      { key: 'storm',  name: 'Lightning Storm', secs: 15, price: 100, min: 1800, color: '#ffe14a', desc: 'Bolts strike the lit rock on your screen.' },
+    ],
+    EFFECT_GROW: 1.6,
+    RUSH_SPEED: 3, SHINE_VALUE: 3, GLASS_DMG: 5,
+    STORM_EVERY: 0.07,      // s between bolts
 
     POISON_TICK: 0.25,      // s between poison damage passes
     POISON_CAP: 60000,      // live poisoned cells
@@ -1493,6 +1516,8 @@ body.listening .hud > * { pointer-events: none; }
       savedAt: Date.now(),
       settings: { particles: true, sound: true, vol: 0.8 },
       buyMode: 1,
+      effects: {},                          // timed world effects running: key -> { until, ... } (playTime)
+      effUses: {},                          // effects bought this world, by key: each costs more
     };
   }
 
@@ -1529,6 +1554,8 @@ body.listening .hud > * { pointer-events: none; }
     this.story = storyRelics(world, state);
     this.tapping = false;
     state.cleared = Math.min(1, world.minedCount / world.solidTotal);
+    state.effects = state.effects || {}; state.effUses = state.effUses || {};   // saves from before effects
+    this.stormT = 0;
     this.derive();
   }
 
@@ -1542,10 +1569,11 @@ body.listening .hud > * { pointer-events: none; }
       return b.special.base + b.special.step * s.up[key].sp;
     };
     const TR = D.TREE;
-    this.valueMult = (1 + 0.25 * s.global.value) * (1 + D.STAR_BONUS * s.stars) * (s.clearMult || 1);
-    this.tDmg = BALLS.map(b => Math.round(b.dmg * Math.pow(TR.dmg.mult, s.up[b.key].dmg)));
+    const fx = key => this.effectOn(key);
+    this.valueMult = (1 + 0.25 * s.global.value) * (1 + D.STAR_BONUS * s.stars) * (s.clearMult || 1) * (fx('shine') ? D.SHINE_VALUE : 1);
+    this.tDmg = BALLS.map(b => Math.round(b.dmg * Math.pow(TR.dmg.mult, s.up[b.key].dmg)) * (fx('glass') ? D.GLASS_DMG : 1));
     this.tMult = BALLS.map(b => Math.pow(D.MILESTONE_MULT, milestone(s.owned[b.key]).lv));
-    this.tSpd = BALLS.map(b => b.speed * (1 + TR.spd.step * s.up[b.key].spd));
+    this.tSpd = BALLS.map(b => b.speed * (1 + TR.spd.step * s.up[b.key].spd) * (fx('rush') ? D.RUSH_SPEED : 1));
     this.pierceMax = BALLS.map(b => b.key === 'lancer' ? sp('lancer') : (b.key === 'drill' || b.key === 'seeker') ? 255 : 0);
     this.bombR = sp('bomb');
     this.venomGen = 4 + 2 * sp('venom');
@@ -1553,7 +1581,7 @@ body.listening .hud > * { pointer-events: none; }
     this.arcs = sp('spark');
     this.midas = sp('midas');
     this.steer = sp('seeker');
-    this.tapDmg = Math.round(3 * Math.pow(1.6, s.global.tap));
+    this.tapDmg = Math.round(3 * Math.pow(1.6, s.global.tap)) * (fx('glass') ? D.GLASS_DMG : 1);
     this.tapR = Math.min(10, 2 + Math.floor(s.global.tap / 3));
     this.discount = 1 - perkVal(s, 'cheap');
     this.offRate = D.OFFLINE_RATE + perkVal(s, 'night');
@@ -1791,11 +1819,21 @@ body.listening .hud > * { pointer-events: none; }
     const cells = this.w.cells, n = this.n, rng = this.rng;
     const bx = this.bx, by = this.by, VX = this.vx, VY = this.vy, bt = this.bt, cd = this.cd, pl = this.pl;
     const seekGold = !this.s.found;
+    const wh = this.effectOn('whirl') ? this.s.effects.whirl : null, turnMax = 2.6 * dt;
     const gx = this.w.gold.x + 0.5, gy = this.w.gold.y + 0.5;
     for (let k = 0; k < n; k++) {
       const t = bt[k];
       let x = bx[k], y = by[k], vx = VX[k], vy = VY[k];
       if (cd[k] > 0) cd[k] -= dt;
+      if (wh && t !== B.lancer && !(t === B.seeker && seekGold)) {
+        // Whirlpool: steer toward the eye and around it, so the swarm spirals in.
+        const dx = wh.x - x, dy = wh.y - y, d = Math.hypot(dx, dy) || 1;
+        const wx = (dx - dy * 0.9) / d, wy = (dy + dx * 0.9) / d;
+        let a = Math.atan2(vx * wy - vy * wx, vx * wx + vy * wy);
+        a = a > turnMax ? turnMax : a < -turnMax ? -turnMax : a;
+        const c = Math.cos(a), sn = Math.sin(a), nvx = vx * c - vy * sn;
+        vy = vx * sn + vy * c; vx = nvx;
+      }
       let dist = this.tSpd[t] * dt, hits = 0;
       while (dist > 0 && hits < 3) {
         const st = dist < 0.9 ? dist : 0.9;
@@ -1844,6 +1882,7 @@ body.listening .hud > * { pointer-events: none; }
     const s = this.s;
     s.playTime += dt;
     this.moveBalls(dt);
+    this.tickEffects(dt);
     this.poisonT += dt;
     while (this.poisonT >= D.POISON_TICK) { this.poisonT -= D.POISON_TICK; this.tickPoison(); }
     this.rateT += dt;
@@ -2002,6 +2041,80 @@ body.listening .hud > * { pointer-events: none; }
     this.s.global[key]++;
     this.derive();
     return true;
+  };
+
+  // ---- timed world effects, paid in bits ----
+  const EFFECT = {};
+  D.EFFECTS.forEach(f => { EFFECT[f.key] = f; });
+  P.effectOn = function (key) { const e = this.s.effects && this.s.effects[key]; return !!e && e.until > this.s.playTime; };
+  P.effectLeft = function (key) { return this.effectOn(key) ? this.s.effects[key].until - this.s.playTime : 0; };
+  P.effectCost = function (key) {
+    const f = EFFECT[key];
+    return Math.max(f.min, (this.s.rate || 0) * f.price) * Math.pow(D.EFFECT_GROW, this.s.effUses[key] || 0);
+  };
+  P.canBuyEffect = function (key) {
+    return !this.effectOn(key) && this.effectCost(key) <= this.s.bits && (key !== 'recall' || this.n > 0);
+  };
+  // at: the screen when it was bought, in world px ({ x, y } its middle, x0..y1 its edges);
+  // the Whirlpool turns around its middle and the Storm strikes inside it.
+  P.buyEffect = function (key, at) {
+    if (!this.canBuyEffect(key)) return false;
+    const f = EFFECT[key], s = this.s;
+    s.bits -= this.effectCost(key);
+    s.effUses[key] = (s.effUses[key] || 0) + 1;
+    if (f.secs) s.effects[key] = Object.assign({ until: s.playTime + f.secs }, at || {});
+    if (key === 'recall') this.recall();
+    this.derive();
+    this.events.push({ type: 'effect', key, on: true });
+    return true;
+  };
+  P.tickEffects = function (dt) {
+    const fx = this.s.effects;
+    for (const key in fx) {
+      if (fx[key].until > this.s.playTime) continue;
+      delete fx[key];
+      this.derive();
+      this.events.push({ type: 'effect', key, on: false });
+    }
+    if (fx.storm) {
+      this.stormT += dt;
+      while (this.stormT >= D.STORM_EVERY) { this.stormT -= D.STORM_EVERY; this.bolt(fx.storm); }
+    }
+  };
+  // Recall: every ball back at the launcher, fanned out along the aim, all at once.
+  P.recall = function () {
+    const d = this.s.drop, n = this.n, aim = this.s.aim;
+    for (let k = 0; k < n; k++) {
+      this.bx[k] = d.x; this.by[k] = d.y;
+      if (this.bt[k] === B.lancer) {
+        const q = (Math.round(aim / (Math.PI / 2)) + [0, 0, 1, 3][k & 3]) & 3;   // half along the aim, a quarter to each side
+        this.vx[k] = [1, 0, -1, 0][q]; this.vy[k] = [0, 1, 0, -1][q];
+      } else {
+        const a = aim + ((k + 0.5) / n - 0.5) * 2.4 + (this.rng() - 0.5) * 0.05;
+        this.vx[k] = Math.cos(a); this.vy[k] = Math.sin(a);
+      }
+      this.pl[k] = this.pierceMax[this.bt[k]];
+      this.cd[k] = 0;
+      this.lastCell[k] = -1;
+    }
+  };
+  // One bolt of the Storm: a lit spot on the screen, and arcs into the rock around it. Paid
+  // like the pickaxe (it is the player's), heard as Lightning.
+  P.bolt = function (r) {
+    for (let tries = 0; tries < 8; tries++) {
+      const x = (r.x0 + this.rng() * (r.x1 - r.x0)) | 0, y = (r.y0 + this.rng() * (r.y1 - r.y0)) | 0;
+      if (x < 0 || y < 0 || x >= W || y >= H || !this.seen(x, y)) continue;
+      const a = this.arcs;
+      this.arcs = 5;
+      this.src = BALLS.length;
+      const before = this.w.minedCount;
+      // The bolt itself, down out of the dark onto the spot, then its arcs into the rock.
+      if (this.arcFx.length < 236) this.arcFx.push(x + (this.rng() - 0.5) * 40, Math.max(0, y - 70 - this.rng() * 60), x + 0.5, y + 0.5);
+      this.spark(x, y, Math.max(this.tapDmg, this.tDmg[B.spark]) * 2, 1);
+      this.arcs = a;
+      if (this.snd) this.snd.add(B.spark, T.STONE, this.w.minedCount > before, x, y);
+      return;
+    }
   };
 
   // ---- star perks ----
@@ -2933,6 +3046,7 @@ registerProcessor('pocket-six', PocketSix);
     this.waiting = [];                                   // big moments waiting for a theme to finish
     this.bank = null;                                    // sampled DX7 voices, once ready
     this.voiceFor = {};                                  // role: the player's own choice (setVoice)
+    this.rush = 1; this.shine = 0; this.glass = 0; this.whirl = 0; this.storm = 0;   // timed world effects running
     // The player's hands on it: drums, and the Tombola's gravity (how dense) and spin (how fast
     // the patterns turn), plus tilt (the whole field leans left or right).
     this.drums = opts.drums !== false;
@@ -3469,13 +3583,13 @@ registerProcessor('pocket-six', PocketSix);
 
   E.setBpm = function (bpm) {
     this.bpm = bpm;
-    this.stepDur = 60 / (bpm * this.style.speed) / 4;
+    this.stepDur = 60 / (bpm * this.style.speed * (this.rush || 1)) / 4;
   };
 
   // The wind moves every half bar: each side's band drifts somewhere new, and now and then a gust.
   E.blow = function (t0) {
     const ten = Math.max(this.tension, this.glow), len = this.stepDur * 8, at = this.atmos;
-    if (this.rnd() < 0.12 + 0.2 * ten) this.gust = 1;
+    if (this.rnd() < 0.12 + 0.2 * ten + 0.5 * this.storm) this.gust = 1;
     this.gust *= 0.6;
     for (const bp of this.windBands) {
       const f = at.lo + this.rnd() * (at.span + 1800 * ten + 900 * this.gust);
@@ -3484,7 +3598,10 @@ registerProcessor('pocket-six', PocketSix);
     const busy = clamp(Math.log10(1 + this.total) / 3, 0, 1);
     const level = (0.035 + 0.03 * busy + 0.09 * ten + 0.05 * this.gust + 0.004 * Math.max(0, this.lift)) * at.wind;
     this.wind.gain.setTargetAtTime(level, t0, len * 0.5);
-    if (this.echoPan.pan) this.echoPan.pan.setTargetAtTime((this.rnd() - 0.5) * (0.6 + 1.2 * this.spin), t0, len * 0.3);
+    if (this.echoPan.pan) {
+      const sw = this.whirl ? (this.whirlSide = -(this.whirlSide || 0.9)) : (this.rnd() - 0.5) * (0.6 + 1.2 * this.spin);
+      this.echoPan.pan.setTargetAtTime(sw, t0, len * 0.3);
+    }
   };
 
   // The region the screen is looking at: the ground nearest one relic. Each has its own room.
@@ -3550,7 +3667,8 @@ registerProcessor('pocket-six', PocketSix);
     const z = clamp((Math.log2(this.view.z) + 2.3) / 7.6, 0, 1);    // 0 = whole world in view, 1 = close up
     const calm = 1 / Math.pow(1 + this.total / 600, 0.3), ten = Math.max(this.tension, this.glow), lift = Math.max(0, this.lift);
     const at = this.atmos;
-    this.tone.frequency.setTargetAtTime(clamp(((3000 + 9000 * z) * calm + 4000 * ten + 500 * lift) * at.tone, 1200, 14000), t0, 1.5);
+    const fx = 3000 * this.glass + 1500 * (this.rush - 1) / 0.35;
+    this.tone.frequency.setTargetAtTime(clamp(((3000 + 9000 * z) * calm + 4000 * ten + 500 * lift + fx) * at.tone, 1200, 14000), t0, 1.5);
     // Zoomed in, the region's room takes over; zoomed out, the whole map blends.
     const room = 1 + (zn.room - 1) * z;
     this.verbOut.gain.setTargetAtTime((0.55 + 0.6 * (1 - z)) * room, t0, 2);
@@ -3561,7 +3679,7 @@ registerProcessor('pocket-six', PocketSix);
     const bed = this.total > 0.5 ? 0.05 + 0.07 * clamp(Math.log10(1 + this.total) / 3, 0, 1) + 0.006 * lift : 0;
     this.padGain.gain.setTargetAtTime(bed + 0.09 * ten, t0, 2);
     this.padLp.frequency.setTargetAtTime(500 + 1600 * clamp(this.poison / 3000, 0, 1) + 2400 * ten + 150 * lift, t0, 2);
-    this.shimmer.gain.setTargetAtTime(0.05 * Math.pow(ten, 1.5) + 0.004 * lift + 0.012 * at.air, t0, 2.5);
+    this.shimmer.gain.setTargetAtTime(0.05 * Math.pow(ten, 1.5) + 0.004 * lift + 0.012 * at.air + 0.04 * this.shine, t0, 2.5);
     this.heart.gain.setTargetAtTime(this.drums ? 1 : 0, t0, 0.5);
     this.glow *= 0.6;
   };
@@ -3669,8 +3787,62 @@ registerProcessor('pocket-six', PocketSix);
       this.padChord(end, 6);
       this.themeEnd = end + 6;
       this.themeChords = [[end, 0]];
+    } else if (e.type === 'effect') {
+      this.effect(e.key, e.on, t0);
     } else if (e.type === 'clear') {
       [-7, -3, 0, 2, 4, 7, 9, 11].forEach((o, i) => this.note(t0 + i * 0.07, this.midi(c + o), 0.9, -0.7 + i * 0.2, bell, I.midas, 1, false, true));
+    }
+  };
+
+  // ---- timed world effects (sim.buyEffect) ----
+  // A band of noise swept from f0 to f1 Hz: risers, falls, wind through the whirlpool, thunder.
+  E.whoosh = function (t0, dur, f0, f1, level, q, pan) {
+    const ctx = this.ctx;
+    this.nz = this.nz || noise(ctx, 4, 9);
+    const src = ctx.createBufferSource(); src.buffer = this.nz; src.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = q ? 'bandpass' : 'lowpass'; bp.Q.value = q || 0.7;
+    bp.frequency.setValueAtTime(f0, t0); bp.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(level, t0 + dur * 0.7); g.gain.setTargetAtTime(0, t0 + dur * 0.7, dur * 0.15);
+    src.connect(bp); bp.connect(g);
+    let out = g;
+    if (ctx.createStereoPanner && pan) { const pn = ctx.createStereoPanner(); pn.pan.value = pan; g.connect(pn); out = pn; }
+    out.connect(this.dry); out.connect(this.verb);
+    src.start(t0); src.stop(t0 + dur * 1.6);
+  };
+  // Each effect has a sound for its start and its end, and some colour the mix while they run.
+  E.effect = function (key, on, t0) {
+    const c = this.chord, bell = INST[I.midas];
+    const run = (ins, t, offs, gap, vel, oct) => offs.forEach((o, i) =>
+      this.note(t0 + i * gap, this.midi(c + o + 7 * (oct == null ? ins.oct : oct)), vel, -0.8 + 1.6 * i / Math.max(1, offs.length - 1), ins, t, 1.1, false, true));
+    if (key === 'rush') {
+      this.rush = on ? 1.35 : 1;
+      this.setBpm(this.bpm);
+      if (on) { this.whoosh(t0, 0.9, 250, 5000, 0.16, 1.2); run(INST[I.lancer], I.lancer, [0, 2, 4, 7, 9, 11, 14], 0.05, 0.7); }
+      else this.whoosh(t0, 1.2, 4000, 250, 0.1, 1.2);
+    } else if (key === 'recall' && on) {
+      // Breath in, then everything at once: every instrument on the chord, in one stroke.
+      this.whoosh(t0, 0.55, 3000, 300, 0.14, 1.5);
+      const t1 = t0 + 0.55;
+      [[I.pebble, 0], [I.lancer, 2], [I.midas, 4], [I.spark, 7], [I.seeker, 4], [I.venom, 0]].forEach(([t, o], i) =>
+        this.note(t1 + i * 0.012, this.midi(c + o + 7 * INST[t].oct), 0.85, -0.6 + i * 0.24, INST[t], t, 1.2, false, true));
+      if (this.drums) this.note(t1, this.midi(c - 14), 1, 0, INST[I.bomb], I.bomb, 1, false, true);
+    } else if (key === 'whirl') {
+      this.whirl = on ? 1 : 0;
+      if (on) { this.whoosh(t0, 2.4, 180, 1400, 0.12, 2, -0.6); this.whoosh(t0 + 0.6, 2.4, 1400, 220, 0.1, 2, 0.6); this.gust = 2; }
+      else this.whoosh(t0, 1.6, 900, 150, 0.07, 1.5);
+    } else if (key === 'shine') {
+      this.shine = on ? 1 : 0;
+      if (on) run(bell, I.midas, [0, 2, 4, 6, 7, 9, 11, 14], 0.11, 0.8, 1);
+      else run(bell, I.midas, [7, 4, 0], 0.2, 0.5, 1);
+    } else if (key === 'glass') {
+      this.glass = on ? 1 : 0;
+      if (on) run(INST[I.spark], I.spark, [14, 11, 9, 7, 4, 2, 0, -3], 0.06, 0.9);
+    } else if (key === 'storm') {
+      this.storm = on ? 1 : 0;
+      // Thunder: a low roll that takes its time, and a crack on top when it begins.
+      if (on) { this.whoosh(t0, 0.25, 6000, 900, 0.12, 0.8); this.whoosh(t0 + 0.1, 3.5, 200, 60, 0.5); }
+      else this.whoosh(t0, 3, 160, 50, 0.25);
     }
   };
 
@@ -4875,6 +5047,15 @@ registerProcessor('pocket-six', PocketSix);
         <div><div class="name">${esc(k.name)}<span class="lv"></span></div><div class="desc"></div></div>
         <button type="button" class="buy" data-act="perk" data-key="${k.key}"><span class="lbl">Buy</span><span class="cost">0</span></button>
       </div>`).join('');
+    // Effects: timed changes to the whole world, dear and brief.
+    $('panel-effects').innerHTML = `<p class="note">Short, expensive changes to the whole world. Each one costs more every time you use it in this world, and they are priced on what you earn, so they stay a treat.</p>` + D.EFFECTS.map(f => `
+      <div class="row ball fx" id="fx-${f.key}">
+        <span class="swatch" style="--c:${f.color}"></span>
+        <div><div class="name">${esc(f.name)}<span class="lv">${f.secs ? f.secs + ' s' : 'instant'}</span></div>
+          <div class="desc">${esc(f.desc)}</div>
+          <div class="prog" hidden><i></i></div></div>
+        <button type="button" class="buy" data-act="effect" data-key="${f.key}"><span class="lbl">Start</span><span class="cost">0</span></button>
+      </div>`).join('');
     this.buildWorld();
   };
 
@@ -5121,7 +5302,7 @@ registerProcessor('pocket-six', PocketSix);
   U.showTab = function (tab) {
     this.tab = tab;
     document.querySelectorAll('.tabs [data-tab]').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab));
-    ['balls', 'tree', 'stars', 'world'].forEach(k => { $('panel-' + k).hidden = k !== tab; });
+    ['balls', 'tree', 'stars', 'effects', 'world'].forEach(k => { $('panel-' + k).hidden = k !== tab; });
     if (tab === 'world') { this.buildWorld(); }
     this.refresh();
   };
@@ -5146,6 +5327,12 @@ registerProcessor('pocket-six', PocketSix);
       case 'buynode': {
         const { t, kind } = this.sel;
         if (sim.buyNode(t, kind) && kind === 'unlock') { this.reveal(t); this.sel = { t, kind: 'dmg' }; }
+        break;
+      }
+      case 'effect': {
+        // The Whirlpool and the Storm happen where you are looking: the open band of screen.
+        const r = g.renderer, mid = r.focus(), a = r.toWorld(0, r.safeTop), z = r.toWorld(r.cssW, r.safeBottom);
+        sim.buyEffect(b.dataset.key, { x: mid.x, y: mid.y, x0: a.x, y0: a.y, x1: z.x, y1: z.y });
         break;
       }
       case 'update': g.checkUpdate(); return;
@@ -5383,6 +5570,27 @@ registerProcessor('pocket-six', PocketSix);
         : 'Find the Golden Pixel to earn stars. Spend them here on perks that last through every world.';
     }
 
+    // Effects: what each costs now, and the ones running, here and in the HUD.
+    const live = [];
+    D.EFFECTS.forEach(f => {
+      const left = sim.effectLeft(f.key);
+      if (left > 0) live.push(`<span class="fx-chip" style="--c:${f.color}">${esc(f.name)} ${Math.ceil(left)}s</span>`);
+      if (this.tab !== 'effects') return;
+      const row = $('fx-' + f.key), prog = row.querySelector('.prog'), btn = row.querySelector('.buy');
+      prog.hidden = !left;
+      if (left) {
+        prog.firstChild.style.width = (100 * left / f.secs).toFixed(1) + '%';
+        btn.disabled = true; btn.classList.remove('afford');
+        btn.querySelector('.lbl').textContent = 'Running';
+        btn.querySelector('.cost').textContent = Math.ceil(left) + ' s';
+      } else {
+        const cost = sim.effectCost(f.key);
+        this.setBuy(btn, cost, sim.canBuyEffect(f.key), f.secs ? 'Start' : 'Now');
+      }
+    });
+    const liveHtml = live.join('');
+    if (liveHtml !== this.liveHtml) { this.liveHtml = liveHtml; $('fxLive').innerHTML = liveHtml; }
+
     if (this.tab === 'world' && $('st-broken')) {
       $('st-broken').textContent = fmt(s.broken);
       $('st-mined').textContent = pct(s.cleared) + '%';
@@ -5432,7 +5640,7 @@ registerProcessor('pocket-six', PocketSix);
 // Stonesong: boot, game loop, autosave, and the music.
 (function () {
   const PQ = window.PQ, D = PQ.DATA;
-  const BUILD = '20261027-143243';                       // build.py stamps the build time here
+  const BUILD = '20261027-144044';                       // build.py stamps the build time here
   const $ = id => document.getElementById(id);
   const canvas = $('world');
   const yieldFrame = () => new Promise(r => setTimeout(r, 0));
@@ -5597,6 +5805,7 @@ registerProcessor('pocket-six', PocketSix);
       if (e.type === 'gold') { game.ui.gold(); saveAll(); }
       if (e.type === 'relic') game.ui.relic(e);
       if (e.type === 'dia') game.ui.diamond(e);
+      if (e.type === 'effect' && !e.on) game.ui.toast(`${D.EFFECTS.find(f => f.key === e.key).name} is over`);
       if (e.type === 'clear') { game.ui.cleared(); saveAll(); }
     }
     game.ui.tick(dt);
