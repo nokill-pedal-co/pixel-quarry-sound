@@ -818,6 +818,12 @@ body.listening .hud > * { pointer-events: none; }
     RUSH_SPEED: 3, SHINE_VALUE: 3, GLASS_DMG: 5,
     STORM_EVERY: 0.07,      // s between bolts
 
+    // Lancers only travel along the axes. They turn 90° on LANCER_TURN of their bounces (rock,
+    // relics and the map's edge alike) and, out in the open, LANCER_WANDER times a second on
+    // average, so none is ever stuck in a cleared lane between two things it can't break.
+    LANCER_TURN: 0.2,
+    LANCER_WANDER: 0.06,
+
     POISON_TICK: 0.25,      // s between poison damage passes
     POISON_CAP: 60000,      // live poisoned cells
     BOMB_COOLDOWN: 1.0,
@@ -1841,13 +1847,18 @@ body.listening .hud > * { pointer-events: none; }
         const c = Math.cos(a), sn = Math.sin(a), nvx = vx * c - vy * sn;
         vy = vx * sn + vy * c; vx = nvx;
       }
+      const lancer = t === B.lancer;
+      // A Lancer turns now and then even with nothing to hit, so it never just paces a lane.
+      if (lancer && rng() < D.LANCER_WANDER * dt) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
       let dist = this.tSpd[t] * dt, hits = 0;
       while (dist > 0 && hits < 3) {
         const st = dist < 0.9 ? dist : 0.9;
         dist -= st;
-        let nx = x + vx * st, ny = y + vy * st;
-        if (nx < 0) { nx = -nx; vx = -vx; } else if (nx >= W) { nx = 2 * W - nx - 0.01; vx = -vx; }
-        if (ny < 0) { ny = -ny; vy = -vy; } else if (ny >= H) { ny = 2 * H - ny - 0.01; vy = -vy; }
+        let nx = x + vx * st, ny = y + vy * st, edge = false;
+        if (nx < 0) { nx = -nx; vx = -vx; edge = true; } else if (nx >= W) { nx = 2 * W - nx - 0.01; vx = -vx; edge = true; }
+        if (ny < 0) { ny = -ny; vy = -vy; edge = true; } else if (ny >= H) { ny = 2 * H - ny - 0.01; vy = -vy; edge = true; }
+        // The map's edge counts as a bounce for a Lancer's turn, like rock does.
+        if (edge && lancer && rng() < D.LANCER_TURN) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
         const cx = nx | 0, cy = ny | 0;
         if (!(cells[cy * W + cx] & MASK)) { x = nx; y = ny; continue; }
         hits++;
@@ -1867,8 +1878,8 @@ body.listening .hud > * { pointer-events: none; }
           vx = -vx; vy = -vy;
         }
         pl[k] = this.pierceMax[t];
-        if (t === B.lancer) {
-          if (rng() < 0.2) { const tmp = vx; vx = vy; vy = -tmp; }
+        if (lancer) {
+          if (rng() < D.LANCER_TURN) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
         } else if (t === B.seeker && seekGold) {
           // Re-aim at the gold after every bounce. Instinct narrows the spread.
           const a = Math.atan2(gy - y, gx - x) + (rng() - 0.5) * 1.8 / this.steer;
@@ -5681,7 +5692,7 @@ registerProcessor('pocket-six', PocketSix);
 // Stonesong: boot, game loop, autosave, and the music.
 (function () {
   const PQ = window.PQ, D = PQ.DATA;
-  const BUILD = '20261027-145949';                       // build.py stamps the build time here
+  const BUILD = '20261028-081902';                       // build.py stamps the build time here
   const $ = id => document.getElementById(id);
   const canvas = $('world');
   const yieldFrame = () => new Promise(r => setTimeout(r, 0));
