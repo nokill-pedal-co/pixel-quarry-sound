@@ -447,6 +447,19 @@ textarea {
 .chip.mute { width: 44px; min-width: 44px; height: 36px; padding: 0; display: grid; place-items: center; }
 .chip.mute svg { width: 20px; height: 20px; }
 .chip.mute.off { color: var(--muted); border-style: dashed; }
+.hud-right { position: relative; }
+.vol-pop {
+  position: absolute; right: 0; top: 44px; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  width: min(280px, calc(100vw - 32px)); padding: 8px 12px 8px 8px;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.vol-pop input { flex: 1; min-width: 0; height: 36px; accent-color: var(--gold); }
+.vol-pop[hidden] { display: none; }
+.vol-val { width: 3ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+.chip.vol-mute { width: 44px; min-width: 44px; height: 36px; padding: 0; display: grid; place-items: center; }
+.chip.vol-mute svg { width: 20px; height: 20px; }
+.chip.vol-mute.off { color: var(--muted); border-style: dashed; }
 .fx-live { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; max-width: 60vw; }
 .fx-live:empty { display: none; }
 .fx-chip { padding: 2px 7px; border: 1px solid var(--c); color: var(--c); font: 500 14px/1.3 var(--display); background: rgba(8, 11, 9, 0.7); font-variant-numeric: tabular-nums; }
@@ -512,8 +525,13 @@ body.listening .hud > * { pointer-events: none; }
   </div>
   <div class="hud-right">
     <div class="hud-top">
-      <button class="chip mute" id="btnMute" type="button" aria-pressed="false" aria-label="Mute the music" title="Mute the music"></button>
+      <button class="chip mute" id="btnMute" type="button" aria-expanded="false" aria-controls="volPop" aria-label="Sound" title="Sound"></button>
       <div class="ballcount"><span id="ballCount">1</span> <small>balls</small></div>
+    </div>
+    <div class="vol-pop" id="volPop" role="group" aria-label="Sound" hidden>
+      <button class="chip vol-mute" id="volMute" type="button" aria-pressed="false"></button>
+      <input type="range" id="volSlider" min="0" max="100" aria-label="Volume">
+      <span class="vol-val" id="volVal" aria-hidden="true"></span>
     </div>
     <div class="mini-btns">
       <button class="chip" id="btnDrop" type="button" title="Jump to the launcher">Launcher</button>
@@ -696,7 +714,7 @@ body.listening .hud > * { pointer-events: none; }
       { id: 7,  key: 'copper',   name: 'Copper',    hp: 6,   val: 60,  col: [64, 224, 228] },
       { id: 8,  key: 'silver',   name: 'Silver',    hp: 20,  val: 400, col: [130, 176, 255] },
       { id: 9,  key: 'amethyst', name: 'Amethyst',  hp: 50,  val: 3000, col: [168, 112, 255] },
-      { id: 10, key: 'relic',    name: 'Relic',     hard: true,         col: [236, 232, 218] },
+      { id: 10, key: 'relic',    name: 'Relic',     hard: true,         col: [214, 228, 255] },
       { id: 11, key: 'gold',     name: 'Golden Pixel', hp: 200, val: 0, col: [255, 206, 46] },
       // Deep rock: only in worlds past the first (see DEPTH). hp tops out at 255, the dmg byte.
       { id: 12, key: 'magma',    name: 'Ashrock',   hp: 210, val: 420, col: [206, 208, 218] },
@@ -715,30 +733,32 @@ body.listening .hud > * { pointer-events: none; }
     UPGRADES: { count: 240, near: 5, dia: f => 1 + Math.floor(f) },
 
     // Ball types. speed in world px/s, dmg per hit, cost = bits for one more.
-    // Every type but the Pebble is unlocked in the skill tree with diamonds.
+    // Every type but the Ping is unlocked in the skill tree with diamonds. Keys are the old
+    // names (saves, the tree and the music go by key); what each one does is its own.
     BALLS: [
-      { key: 'pebble', name: 'Pebble', color: '#e9e4d6', dmg: 1,  speed: 46,  cost: 15,
+      { key: 'pebble', name: 'Ping', color: '#e9e4d6', dmg: 1,  speed: 46,  cost: 15,
         desc: 'Bounces around and chips whatever it hits.' },
-      { key: 'lancer', name: 'Lancer', color: '#38c8ff', dmg: 3,  speed: 120, cost: 300,
+      { key: 'lancer', name: 'Pulse', color: '#38c8ff', dmg: 3,  speed: 120, cost: 300,
         desc: 'Only travels in straight lines. Cuts long, clean tunnels.',
         special: { key: 'pierce', name: 'Pierce', desc: 'Keeps going through more broken pixels', max: 6, base: 0, step: 2 } },
-      { key: 'bomb',   name: 'Bomb',   color: '#ff5a48', dmg: 2,  speed: 50,  cost: 2800,
-        desc: 'Blows out a circle of pixels on impact, then recharges.',
-        special: { key: 'radius', name: 'Blast radius', desc: '+2 px blast radius', max: 6, base: 4, step: 2 } },
-      { key: 'venom',  name: 'Venom',  color: '#6fe05a', dmg: 2,  speed: 52,  cost: 40000,
-        desc: 'Poisons what it touches. Poison eats outward through the rock.',
-        special: { key: 'spread', name: 'Virulence', desc: 'Poison spreads further', max: 6, base: 0, step: 1 } },
-      { key: 'spark',  name: 'Lightning', color: '#ffe14a', dmg: 3, speed: 64, cost: 150000,
-        desc: 'Every hit throws arcs of lightning into the rock nearby.',
-        special: { key: 'arcs', name: 'Forks', desc: '+1 arc per hit', max: 6, base: 2, step: 1 } },
-      { key: 'midas',  name: 'Midas',  color: '#ff9b2e', dmg: 4,  speed: 60,  cost: 400000,
-        desc: 'Every pixel it breaks pays out several times over.',
-        special: { key: 'mult', name: 'Alchemy', desc: '+2× payout', max: 6, base: 4, step: 2 } },
-      { key: 'drill',  name: 'Drill',  color: '#b46cff', dmg: 30, speed: 40,  cost: 1.2e7,
-        desc: 'Bores straight through anything it can break in one hit.' },
-      { key: 'seeker', name: 'Seeker', color: '#f4f4f4', dmg: 60, speed: 70,  cost: 2.5e8,
-        desc: 'Homes in on the Golden Pixel, boring through soft rock on the way.',
-        special: { key: 'steer', name: 'Instinct', desc: 'Steers harder toward the gold', max: 6, base: 1, step: 1 } },
+      { key: 'bomb',   name: 'Gong',   color: '#ff5a48', dmg: 2,  speed: 50,  cost: 2800,
+        desc: 'On impact it sends out a ring of sound that chips the first rock it meets in every direction, then rings back up.',
+        special: { key: 'swell', name: 'Swell', desc: 'The ring reaches further, strikes more rock and cuts deeper', max: 6, base: 0, step: 1 } },
+      { key: 'venom',  name: 'Echo', plural: 'Echoes', color: '#6fe05a', dmg: 2,  speed: 52,  cost: 40000,
+        desc: 'A ghost follows a second behind it and strikes again wherever it struck, one pixel deeper.',
+        special: { key: 'decay', name: 'Decay', desc: 'One more echo after the last', max: 6, base: 2, step: 1 } },
+      { key: 'spark',  name: 'String', color: '#ffe14a', dmg: 3, speed: 64, cost: 150000,
+        desc: 'They pair up, joined by a vibrating string. Rock the string passes through takes damage.',
+        special: { key: 'tension', name: 'Tension', desc: '+15 px of string', max: 6, base: 70, step: 15 } },
+      { key: 'midas',  name: 'Harmonic', color: '#ff9b2e', dmg: 4,  speed: 60,  cost: 400000,
+        desc: 'Pixels whose note is in the chord playing now pay it many times over. Watch them shimmer around it.',
+        special: { key: 'mult', name: 'Overtones', desc: '+4× payout on chord notes', max: 6, base: 9, step: 4 } },
+      { key: 'drill',  name: 'Drone',  color: '#b46cff', dmg: 30, speed: 26,  cost: 1.2e7,
+        desc: 'Drifts slowly through the rock, humming. Everything around it wears away, hollowing out caverns.',
+        special: { key: 'hum', name: 'Hum', desc: '+1 px hum radius', max: 6, base: 3, step: 1 } },
+      { key: 'seeker', name: 'Siren', color: '#f4f4f4', dmg: 60, speed: 70,  cost: 2.5e8,
+        desc: 'Heads for the Golden Pixel, boring through soft rock, and calls every ball nearby to follow it.',
+        special: { key: 'call', name: 'Call', desc: 'Calls balls from 20 px further', max: 6, base: 60, step: 20 } },
     ],
     UNLOCK_MULT: 2,
     // Owning this many of a type multiplies what that type earns by MILESTONE_MULT, each time.
@@ -807,28 +827,36 @@ body.listening .hud > * { pointer-events: none; }
     // (price) so they stay dear at any stage, never below min, and each buy in a world costs
     // EFFECT_GROW times the one before. secs: how long one lasts (0 = happens at once).
     EFFECTS: [
-      { key: 'rush',   name: 'Overdrive',       secs: 20, price: 90,  min: 1500, color: '#ff9b2e', desc: 'Every ball moves three times as fast.' },
-      { key: 'recall', name: 'Recall',          secs: 0,  price: 45,  min: 800,  color: '#e9e4d6', desc: 'Every ball flies home to the launcher and fires out again, all at once.' },
-      { key: 'whirl',  name: 'Whirlpool',       secs: 15, price: 60,  min: 1000, color: '#38c8ff', desc: 'Balls spiral around the middle of your screen.' },
-      { key: 'shine',  name: 'Golden Hour',     secs: 20, price: 180, min: 3000, color: '#ffd640', desc: 'Every pixel pays triple.' },
-      { key: 'glass',  name: 'Glass Rock',      secs: 12, price: 120, min: 2000, color: '#b8f4ff', desc: 'The rock turns brittle: every hit does five times the damage.' },
-      { key: 'storm',  name: 'Lightning Storm', secs: 15, price: 100, min: 1800, color: '#ffe14a', desc: 'Bolts strike the lit rock on your screen.' },
+      { key: 'rush',   name: 'Presto',          secs: 20, price: 90,  min: 1500, color: '#ff9b2e', desc: 'Every ball moves three times as fast.' },
+      { key: 'recall', name: 'Encore',          secs: 0,  price: 45,  min: 800,  color: '#e9e4d6', desc: 'Every ball flies home to the launcher and plays again, all at once.' },
+      { key: 'whirl',  name: 'Spiral',          secs: 15, price: 60,  min: 1000, color: '#38c8ff', desc: 'Balls spiral around the middle of your screen.' },
+      { key: 'shine',  name: 'Golden Chord',    secs: 20, price: 180, min: 3000, color: '#ffd640', desc: 'Every pixel pays triple.' },
+      { key: 'glass',  name: 'Resonance',       secs: 12, price: 120, min: 2000, color: '#b8f4ff', desc: 'The rock rings at its breaking pitch: every hit does five times the damage.' },
+      { key: 'storm',  name: 'Thunder Roll',    secs: 15, price: 100, min: 1800, color: '#ffe14a', desc: 'Bolts strike the lit rock on your screen.' },
     ],
     EFFECT_GROW: 1.6,
     RUSH_SPEED: 3, SHINE_VALUE: 3, GLASS_DMG: 5,
     STORM_EVERY: 0.07,      // s between bolts
 
-    // Lancers only travel along the axes. They turn 90° on LANCER_TURN of their bounces (rock,
-    // relics and the map's edge alike) and, out in the open, LANCER_WANDER times a second on
+    // Pulses only travel along the axes. They turn 90° on PULSE_TURN of their bounces (rock,
+    // relics and the map's edge alike) and, out in the open, PULSE_WANDER times a second on
     // average, so none is ever stuck in a cleared lane between two things it can't break.
-    LANCER_TURN: 0.2,
-    LANCER_WANDER: 0.06,
+    PULSE_TURN: 0.2,
+    PULSE_WANDER: 0.06,
+    GONG_SPEED: 120,        // px/s the ring spreads
+    GONG_REACH: 24,         // px the ring reaches (Swell adds 8 a level)
+    GONG_RAYS: 32,          // rock the ring can strike (each Swell level adds as many again)
+    ECHO_DELAY: 1.0,        // s between a strike and its echo
+    ECHO_FADE: 0.75,        // each echo after the first strikes this much softer again
+    ECHO_CAP: 8000,         // echoes waiting at once
+    STRING_TICK: 0.35,      // s between a string's strikes on the rock it passes through
+    STRING_PIERCE: 2,       // pixels a String bores through, so its string ends up in the rock
+    HUM_TICK: 0.3,          // s between a Drone's hums
+    SIREN_TURN: 1.4,        // rad/s a called ball turns toward its Siren
+    SIREN_LISTEN: 32,       // Sirens the rest of the swarm listens for
 
-    POISON_TICK: 0.25,      // s between poison damage passes
-    POISON_CAP: 60000,      // live poisoned cells
-    BOMB_COOLDOWN: 1.0,
-    SPARK_COOLDOWN: 0.35,   // s between a Lightning ball's arc bursts
-    SPARK_REACH: 14,        // px an arc can jump
+    BOMB_COOLDOWN: 1.0,     // s before a Gong rings again
+    SPARK_REACH: 14,        // px a Thunder Roll arc can jump
     OFFLINE_RATE: 0.3,      // share of live income paid while away
     OFFLINE_CAP: 8 * 3600,  // s
     STAR_BONUS: 0.5,        // +50% value per Golden Pixel found
@@ -1114,8 +1142,8 @@ body.listening .hud > * { pointer-events: none; }
 
 </script>
 <script>
-// Pixel Quarry: relics. Each one is a 2D distance field, drawn into the world as glowing
-// white line art: its outline, plus any inner lines the shape defines. Relic cells are
+// Stonesong: relics, crystal formations. Each one is a 2D distance field, drawn into the world as glowing
+// line art: its outline, plus any inner lines the shape defines. Relic cells are
 // unbreakable. Rock sealed inside an outline is hollowed out by the world afterwards.
 (function () {
   const root = typeof window !== 'undefined' ? window : globalThis;
@@ -1145,136 +1173,116 @@ body.listening .hud > * { pointer-events: none; }
   }
   const noise = (x, y, s) => PQ.World.vnoise(x, y, s);
 
-  // ---- the relics; coordinates are px at scale 1, origin at the centre ----
-  const KINDS = [
-    {
-      name: 'Femur', weight: 3, hw: 78, hh: 24, tilt: Math.PI,
+  // A polygon's distance field (points as a flat [x0, y0, x1, y1, ...] list).
+  function poly(x, y, P) {
+    const n = P.length / 2;
+    let d = (x - P[0]) * (x - P[0]) + (y - P[1]) * (y - P[1]), s = 1;
+    for (let i = 0, j = n - 1; i < n; j = i, i++) {
+      const ex = P[2 * j] - P[2 * i], ey = P[2 * j + 1] - P[2 * i + 1], wx = x - P[2 * i], wy = y - P[2 * i + 1];
+      const h = clamp((wx * ex + wy * ey) / (ex * ex + ey * ey), 0, 1), bx = wx - ex * h, by = wy - ey * h;
+      d = Math.min(d, bx * bx + by * by);
+      const c1 = y >= P[2 * i + 1], c2 = y < P[2 * j + 1], c3 = ex * wy > ey * wx;
+      if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
+    }
+    return s * Math.sqrt(d);
+  }
+  const seg = (x, y, q) => capsule(x, y, q[0], q[1], q[2], q[3], 0, 0);
+
+  // One crystal point: a prism from a base at (ax, ay) growing along angle `ang` (0 = up),
+  // half-width w, with a pointed tip `tip` long. Its facet edges become inner lines.
+  function prism(ax, ay, ang, len, w, tip) {
+    const ux = Math.sin(ang), uy = -Math.cos(ang), vx = -uy, vy = ux, s = len - tip;
+    const P = (a, b) => [ax + ux * a + vx * b, ay + uy * a + vy * b];
+    const k = w * 0.35;
+    return {
+      poly: [...P(0, -w), ...P(s, -w), ...P(len, 0), ...P(s, w), ...P(0, w)],
+      segs: [[...P(0, -k), ...P(s, -k)], [...P(s, -k), ...P(len, 0)], [...P(0, k), ...P(s, k)], [...P(s, k), ...P(len, 0)]],
+    };
+  }
+  // A formation from prisms and other polygons, plus any extra distance field (rock it grows from).
+  function formation(parts, extra, lines) {
+    const polys = parts.map(p => p.poly || p), segs = [].concat(...parts.map(p => p.segs || [])).concat(lines || []);
+    return {
       sdf(x, y) {
-        const yb = y - 4 * (1 - (x / 62) * (x / 62));            // a slight bow in the shaft
-        let d = capsule(x, yb, -48, 0, 48, 0, 6.5, 7);
-        d = smin(d, capsule(x, y, -50, 0, -62, -7, 7, 8), 5);      // neck
-        d = smin(d, circle(x, y, -65, -9, 11.5), 4);              // head
-        d = smin(d, circle(x, y, -55, 8, 8), 5);                  // trochanter
-        d = smin(d, box(x, y, 54, 1, 6, 12, 4), 6);
-        d = smin(d, circle(x, y, 61, -6, 10.5), 5);               // condyles
-        d = smin(d, circle(x, y, 62, 8, 10.5), 5);
-        return Math.max(d, -ellipse(x, y, 67, 1, 3.5, 2.5));      // notch between condyles
+        let d = extra ? extra(x, y) : 1e9;
+        for (const P of polys) d = Math.min(d, poly(x, y, P));
+        return d;
       },
-    },
-    {
-      name: 'Spine and ribs', weight: 2, hw: 84, hh: 74, tilt: 0.5,
+      line(x, y) {
+        for (const q of segs) if (seg(x, y, q) < 0.8) return true;
+        return false;
+      },
+    };
+  }
+
+  // ---- the relics: crystal formations; coordinates are px at scale 1, origin at the centre ----
+  // Each keeps the weight and size (hw, hh) of the relic it replaced, so the relics, and the
+  // Golden Pixel placed around them, land exactly where they did in worlds already under way.
+  const KINDS = [
+    Object.assign({ name: 'Quartz needle', weight: 3, hw: 78, hh: 24, tilt: Math.PI }, formation([
+      { poly: [-78, 0, -60, -12, 60, -12, 78, 0, 60, 12, -60, 12],
+        segs: [[-60, -4, 60, -4], [-60, 4, 60, 4], [-60, -4, -78, 0], [-60, 4, -78, 0], [60, -4, 78, 0], [60, 4, 78, 0]] },
+      prism(22, -10, 0.55, 16, 4, 6),
+      prism(-30, 10, Math.PI + 0.5, 13, 3.5, 5),
+    ])),
+    Object.assign({ name: 'Crystal cluster', weight: 2, hw: 84, hh: 74, tilt: 0.5 }, formation(
+      [[-1.05, 52, 8], [-0.7, 78, 9], [-0.35, 98, 10], [0.02, 112, 11], [0.38, 92, 10], [0.72, 70, 9], [1.08, 48, 7]]
+        .map(([a, len, w], i) => prism((i - 3) * 9, 50, a, len, w, w * 1.8)),
+      (x, y) => ellipse(x, y, 0, 56, 70, 16) + 3 * (noise(x / 6, y / 6, 5) - 0.5))),
+    Object.assign({ name: 'Stone organ', weight: 2, hw: 74, hh: 40, tilt: 0.6 }, {
+      // Dripstone pipes hanging from a ledge, short to long and back, like an organ's.
       sdf(x, y) {
-        let d = 1e9;
-        for (let i = 0; i < 7; i++) {
-          const vx = -66 + i * 21, vy = -40 + 5 * Math.sin(i * 0.7);
-          if (x < vx - 16 || x > vx + 38) continue;               // too far to matter
-          const L = 1.15 - Math.abs(i - 3) * 0.1;                  // middle ribs longest
-          if (x < vx + 16) {
-            d = Math.min(d, box(x, y, vx, vy, 9, 7, 3.5));        // vertebra
-            d = smin(d, capsule(x, y, vx, vy - 5, vx + 7, vy - 21, 3.6, 1.8), 3);   // spinous process
-          }
-          if (x < vx - 10 || y < vy - 8) continue;
-          // A rib arcs out from the spine and sweeps back as it drops.
-          let r = 1e9, px = vx + 3, py = vy + 4;
-          for (let k = 1; k <= 5; k++) {
-            const a = 0.15 + k * 0.32, nx = vx + 3 + Math.sin(a) * 26 * L - k * 2, ny = vy + 4 + (1 - Math.cos(a)) * 40 * L + k * 8 * L;
-            r = smin(r, capsule(x, y, px, py, nx, ny, 3.3 - k * 0.3, 3.3 - (k + 1) * 0.3), 2.5);
-            px = nx; py = ny;
-          }
-          d = Math.min(d, r);
+        let d = box(x, y, 0, -32, 72, 6, 3) + 2 * (noise(x / 5, y / 5, 9) - 0.5);
+        for (let i = 0; i < 9; i++) {
+          const px = -60 + i * 15, L = 26 + 38 * Math.sin((i + 0.5) / 9 * Math.PI);
+          d = smin(d, capsule(x, y, px, -28, px, -28 + L, 5.5, 1.4), 2);
         }
         return d;
       },
-    },
+      line(x, y) { return Math.abs(y + 22) < 0.7 && Math.abs(x) < 66; },
+    }),
     {
-      name: 'Canid skull', weight: 2, hw: 74, hh: 40, tilt: 0.6,
+      name: 'Geode', weight: 2, hw: 58, hh: 54, tilt: Math.PI,
+      // A rough shell, broken open: crystal teeth line the hollow, agate bands run round it.
       sdf(x, y) {
-        let d = ellipse(x, y, 20, -8, 40, 27);                    // braincase
-        d = smin(d, circle(x, y, 52, -2, 15), 8);                 // back of the skull
-        d = smin(d, capsule(x, y, -6, 0, -62, 10, 19, 8), 10);    // muzzle
-        d = smin(d, capsule(x, y, 0, -34, 50, -22, 2.5, 2), 4);   // sagittal crest
-        d = smin(d, capsule(x, y, -12, 10, 30, 12, 5, 4), 4);     // cheekbone
-        d = Math.max(d, -circle(x, y, -6, -8, 10));               // eye socket
-        d = Math.max(d, -ellipse(x, y, -64, 6, 5, 4));            // nostril
-        d = Math.min(d, capsule(x, y, -46, 14, -49, 31, 4, 1.2)); // canine
-        for (let i = 0; i < 5; i++) {
-          const tx = -35 + i * 9;
-          d = Math.min(d, capsule(x, y, tx, 15, tx + 1, i === 3 ? 26 : 22, 3.4, 1.2));
-        }
-        let j = capsule(x, y, -58, 31, 26, 31, 5.5, 8);           // lower jaw
-        j = smin(j, capsule(x, y, 26, 31, 40, 14, 8, 7), 6);
-        j = smin(j, circle(x, y, 43, 27, 6), 3);
-        for (let i = 0; i < 4; i++) j = Math.min(j, capsule(x, y, -40 + i * 11, 26, -40 + i * 11, 21, 3, 1.2));
-        return Math.min(d, j);
+        const outer = ellipse(x, y, 0, 0, 56, 52) + 3 * (noise(x / 6, y / 6, 13) - 0.5);
+        const th = Math.atan2(y, x), f = th * 18 / (2 * Math.PI);
+        const tooth = Math.abs(f - Math.floor(f) - 0.5) * 2;           // 0 at a point's tip .. 1 between
+        return Math.max(outer, -(ellipse(x, y, 0, 0, 38, 35) + 9 * (1 - tooth)));
       },
+      line(x, y) { return Math.abs(ellipse(x, y, 0, 0, 47, 43)) < 0.8; },
     },
-    {
-      name: 'Ammonite', weight: 2, hw: 58, hh: 54, tilt: Math.PI,
-      sdf(x, y) { return ellipse(x, y, 0, 0, 56, 52) + 1.5 * (noise(x / 5, y / 5, 11) - 0.5); },
-      line(x, y) {                                               // the seam between whorls
-        const r = hyp(x, y) + 0.01, th = Math.atan2(y, x);
-        let f = (Math.log(r / 2.5) / 0.16 - th) / (2 * Math.PI);
-        f -= Math.floor(f);
-        return r > 4 && Math.min(f, 1 - f) * 2 * Math.PI * 0.16 * r < 0.8;   // ~1.6 px wide at any radius
-      },
-    },
-    {
-      name: 'Iron anchor', weight: 1, hw: 60, hh: 78, tilt: 0.9,
-      sdf(x, y) {
-        let d = box(x, y, 0, -2, 4.5, 46, 2);                     // shank
-        d = Math.min(d, ring(x, y, 0, -60, 11, 3.5));             // ring
-        d = Math.min(d, box(x, y, 0, -38, 30, 4, 2), circle(x, y, -31, -38, 5), circle(x, y, 31, -38, 5));
-        d = smin(d, Math.max(ring(x, y, 0, 0, 44, 5), 12 - y), 4); // arms
-        d = Math.min(d, capsule(x, y, -40, 22, -50, 3, 9, 2), capsule(x, y, 40, 22, 50, 3, 9, 2));
-        return smin(d, circle(x, y, 0, 44, 7), 4);                // crown
-      },
-    },
-    {
-      name: 'Bronze gear', weight: 1, hw: 50, hh: 50, tilt: Math.PI,
-      sdf(x, y) {
-        const r = hyp(x, y), th = Math.atan2(y, x);
-        const tooth = clamp((Math.cos(th * 12) + 0.15) * 2.2, 0, 1) * 7;
-        let d = r - (39 + tooth);
-        d = Math.max(d, 9 - r);                                   // axle hole
-        const win = Math.max(Math.abs(r - 24) - 7.5, (Math.cos(th * 5) - 0.35) * r * 0.45);
-        return Math.max(d, -win);                                  // windows between spokes
-      },
-      line(x, y) { const r = hyp(x, y); return Math.abs(r - 31) < 0.8 || Math.abs(r - 15) < 0.8; },   // rim and hub
-    },
-    {
-      name: 'Amphora', weight: 1, hw: 40, hh: 70, tilt: 1.2,
-      sdf(x, y) {
-        let d = ellipse(x, y, 0, 8, 29, 42);
-        d = smin(d, box(x, y, 0, -40, 9, 14, 3), 8);
-        d = Math.min(d, box(x, y, 0, -55, 13, 3.5, 2));
-        for (const s of [-1, 1]) {
-          let hnd = capsule(x, y, s * 9, -48, s * 22, -46, 3, 3);
-          hnd = smin(hnd, capsule(x, y, s * 22, -46, s * 26, -26, 3, 3.2), 3);
-          d = smin(d, hnd, 3);
-        }
-        d = smin(d, capsule(x, y, 0, 46, 0, 64, 9, 4), 6);         // foot
-        return Math.max(d, -(circle(x, y, 33, -8, 15) + 4 * (noise(x / 3, y / 3, 7) - 0.5)));   // broken side
-      },
-      line(x, y) { return Math.abs(y + 17.5) < 0.7 || Math.abs(y - 19.5) < 0.7; },   // painted bands
-    },
-    {
-      name: 'Sword', weight: 1, hw: 94, hh: 20, tilt: Math.PI,
-      sdf(x, y) {
-        let d = capsule(x, y, -58, 0, 64, 0, 7, 1.2);              // blade
-        d = Math.min(d, box(x, y, -62, 0, 3.5, 17, 2));            // crossguard
-        d = Math.min(d, capsule(x, y, -66, 0, -82, 0, 3.2, 3.2));  // grip
-        return Math.min(d, circle(x, y, -87, 0, 5.5));             // pommel
-      },
-      line(x, y) { return x > -55 && x < 56 && Math.abs(y) < 0.6; },   // fuller
-    },
-    {
-      name: 'Pawprint slab', weight: 1, hw: 50, hh: 46, tilt: 0.7,
-      sdf(x, y) { return box(x, y, 0, 0, 46, 42, 12) + 5 * (noise(x / 7, y / 7, 3) - 0.5); },
-      line(x, y) {                                               // the paw's pads
-        const pad = (cx, cy, rx, ry) => Math.abs(ellipse(x, y, cx, cy, rx, ry)) < 0.9;
-        return pad(0, 14, 17, 13) || pad(-22, -10, 7, 9) || pad(-8, -23, 7, 9) || pad(8, -23, 7, 9) || pad(22, -10, 7, 9);
-      },
-    },
+    Object.assign({ name: 'Dripstone', weight: 1, hw: 60, hh: 78, tilt: 0.9 }, formation([
+      // A stalactite and a stalagmite growing toward each other, not quite touching; the lines
+      // across them are growth rings.
+      { poly: [-20, -66, 20, -66, 3, -10, 0, -5, -3, -10], segs: [[-12, -50, 12, -50], [-7, -34, 7, -34], [-3.5, -22, 3.5, -22]] },
+      { poly: [-42, -66, -28, -66, -34, -40] },
+      { poly: [30, -66, 42, -66, 36, -48] },
+      { poly: [-26, 66, 26, 66, 4, 12, 0, 7, -4, 12], segs: [[-17, 52, 17, 52], [-10, 36, 10, 36], [-5, 24, 5, 24]] },
+      { poly: [24, 66, 40, 66, 32, 42] },
+      { poly: [-50, -70, -30, -76, 30, -76, 50, -70, 30, -63, -30, -63] },   // the rock they hang from
+      { poly: [-54, 70, -30, 63, 30, 63, 54, 70, 30, 76, -30, 76] },        // and grow up from
+    ])),
+    Object.assign({ name: 'Desert rose', weight: 1, hw: 50, hh: 50, tilt: Math.PI }, formation(
+      // Blades of crystal crossing at the middle, like the petals of a rose.
+      [0, 1, 2, 3, 4, 5].map(k => {
+        const a = k * Math.PI / 6, ca = Math.cos(a), sa = Math.sin(a), L = k % 2 ? 40 : 47, w = k % 2 ? 9 : 11;
+        return { poly: [L * ca, L * sa, -w * sa, w * ca, -L * ca, -L * sa, w * sa, -w * ca], segs: [[L * ca * 0.8, L * sa * 0.8, L * ca * 0.3, L * sa * 0.3]] };
+      }))),
+    Object.assign({ name: 'Amethyst point', weight: 1, hw: 40, hh: 70, tilt: 1.2 }, formation([
+      prism(2, 60, 0, 128, 17, 34),
+      prism(-16, 58, -0.45, 52, 8, 14),
+      prism(20, 60, 0.5, 38, 6, 11),
+    ], (x, y) => ellipse(x, y, 0, 62, 38, 9) + 3 * (noise(x / 5, y / 5, 8) - 0.5))),
+    Object.assign({ name: 'Selenite blade', weight: 1, hw: 94, hh: 20, tilt: Math.PI }, formation([
+      { poly: [-92, -5, 84, -12, 92, -6, -84, 11], segs: [[-80, -3, 82, -8], [-82, 3, 84, -2], [-84, 8, 86, 2]] },
+      { poly: [-60, 10, 52, 5, 58, 9, -54, 15] },
+    ])),
+    Object.assign({ name: 'Fluorite cube', weight: 1, hw: 50, hh: 46, tilt: 0.7 }, formation([
+      { poly: [0, -44, 38, -22, 38, 22, 0, 44, -38, 22, -38, -22],
+        segs: [[0, 0, 0, 44], [0, 0, -38, -22], [0, 0, 38, -22],
+               [0, -26, 22, -13], [22, -13, 22, 13], [22, 13, 0, 26], [0, 26, -22, 13], [-22, 13, -22, -13], [-22, -13, 0, -26]] },
+    ])),
   ];
   const TOTAL = KINDS.reduce((a, k) => a + k.weight, 0);
 
@@ -1337,7 +1345,7 @@ body.listening .hud > * { pointer-events: none; }
 
 </script>
 <script>
-// Pixel Quarry: the story. Each depth has a chapter, split into fragments that hide in the
+// Stonesong: the story. Each depth has a chapter, split into fragments that hide in the
 // world's relics. Find a relic that carries one and the fragment goes in the Journal; go
 // deeper without finding them all and those pieces of that chapter are lost.
 (function () {
@@ -1346,108 +1354,108 @@ body.listening .hud > * { pointer-events: none; }
 
   const STORY = [
     {
-      title: 'The Foreman’s Log',
+      title: 'The Field Recordist',
       fragments: [
-        'Day 1. The survey says there is nothing down here worth the diesel. The company sent us anyway. Somebody upstairs has seen a photograph.',
-        'Day 4. Hollis swears the rock glows at the edges when the lamps are off. I told him to sleep more. Then I turned my lamp off.',
-        'Day 9. Found bones in the clay. Old ones. The dog will not go near them, so I am not either.',
-        'Day 15. Every crew that worked this site before us is listed in the office binder. Every entry stops mid-sentence.',
-        'Day 22. Juno dug all night on her own. She came back with gold dust in her fur and would not eat.',
-        'Day 30. The company called. They did not ask about the gold. They asked whether we had heard it yet.',
-        'Day 31. We have heard it.',
-        'Day 38. Half the crew left. The other half started digging with their hands.',
-        'Day 40. It is one pixel. The photograph was of one pixel. All this for one.',
-        'Last entry. The floor gave way under the drill and there was another world under it, lit, waiting. I am going down. Juno went first.',
+        'Day 1. They hired me to record the quarry for a film about silence. Nobody told me what was down here.',
+        'Day 3. With the machines off, the rock hums. Low, under hearing. My meters say it is there. My ears agree.',
+        'Day 6. Each kind of rock has its own pitch. The soft green stuff sits high, the red sits low. I have started labelling samples by note instead of by name.',
+        'Day 10. Something sings back. When I play a tape into the tunnel, the tunnel answers a fifth higher.',
+        'Day 14. Found crystals in a pocket of clay. Tapped one with a pencil. The whole wall rang for a minute.',
+        'Day 19. The crew sleep with earplugs now. I sleep with headphones on.',
+        'Day 23. Every sound down here bends toward one note. I walked the tunnels with a tuner. It is strongest far out, past the hard rock.',
+        'Day 30. It comes from one point. One grain of gold, no bigger than a pixel on my screen.',
+        'Day 31. I recorded it. On playback the tape is blank, and I can still hear it.',
+        'Last entry. The floor under the gold was hollow, and the hollow was full of the same note, louder. I am taking the recorder down.',
       ],
     },
     {
-      title: 'The Dog Who Dug',
+      title: 'The Choir',
       fragments: [
-        'The shepherd had one dog and the dog had one habit. Wherever they stopped, she dug.',
-        'The village laughed at the holes. Then the holes got deep enough that nobody laughed near them.',
-        'One morning the dog was gone and there was a tunnel where she had slept, straight down, as clean as a well.',
-        'The shepherd sold the flock to buy rope.',
-        'Down there the shepherd found pawprints pressed into stone that had been stone for a very long time.',
-        'Every few days, a bark. Always farther. Always lower.',
-        'The rope ran out. The shepherd kept going.',
-        'Old shepherds say a good dog finds what you lost. Nobody says what a good dog does when it finds something that was never yours.',
-        'Near the end the light came from below, gold, and the barking stopped.',
-        'They found the shepherd’s crook at the bottom of the tunnel, and beside it, a second set of footprints that walked on, deeper.',
+        'The village had a choir of eleven, and a cave they were told never to sing in.',
+        'The youngest sang one note in it anyway, on a dare. The cave held the note for a whole day.',
+        'After that the choir practised there every Sunday. The cave learned the harmonies before they did.',
+        'People came from the next valley to listen. Then from the next country.',
+        'The crystals in the walls grew a finger a year, always toward the singers.',
+        'One winter the choir sang a chord nobody had written. No one would say who started it.',
+        'The rock began to sing on weekdays, when the church was empty.',
+        'The eleventh voice stopped coming to practice. The other ten swore they could still hear her, under the floor.',
+        'They followed her down with lanterns, singing so they would not get lost.',
+        'The cave is quiet now. Hum in it and ten voices join in, then one more, a long way down.',
       ],
     },
     {
-      title: 'The Harbor Below',
+      title: 'The Bellfounder',
       fragments: [
-        'The port was rich because its lighthouse could see ships that had not yet come over the horizon.',
-        'The keeper said the light did not come from the lamp. It came up through the floor, from somewhere under the town.',
-        'Merchants paid well to know which ships were coming. Nobody asked how the keeper knew.',
-        'Wine jars began washing up in the harbor sealed and full, stamped with the name of the port, dated a hundred years ahead.',
-        'The keeper dug under the lighthouse to find the source. The town helped. The town was greedy.',
-        'They found it: one point of gold so bright it had no size.',
-        'That night the sea came in slowly, politely, like a guest.',
-        'The anchor of the last ship out was found later, miles inland, deep in the rock, pointing down.',
-        'Divers say the lighthouse is still lit, on the sea floor, under the silt.',
-        'It is pointing the way. It always was.',
+        'The bellfounder bought the quarry for its ore. Every bell she cast from it came out of the mould already ringing.',
+        'They all rang the same note, whatever their size. Hand bells, church bells, a bell as big as a cart.',
+        'She tried ore from other mines. Those bells rang true. She went back to the quarry.',
+        'Towns that hung her bells said they rang on their own before storms, and before good news.',
+        'She dug deeper for purer ore. The deeper she dug, the less her bells needed striking.',
+        'Her apprentice left a note: The ore isn’t making the sound. It’s remembering it.',
+        'She cast one last bell from nothing but gold dust from the deepest seam.',
+        'It made no sound when struck. Everyone in the valley heard it anyway.',
+        'She hung it at the bottom of the shaft and went down to hear it properly.',
+        'Her bells still hang in a hundred towers. Once a year, at the same moment, they all ring.',
       ],
     },
     {
-      title: 'The Garrison',
+      title: 'The Listeners',
       fragments: [
-        'Orders: hold the pit. Let no one down. Let nothing up.',
-        'We were not told what was in the pit. Soldiers are not told things. That is what makes us soldiers.',
-        'The first winter, men began to hear their names called from below, in their mothers’ voices.',
-        'The captain ordered the pit filled. Every morning it was open again.',
-        'We drew lots for who would stand closest to the edge. I stopped drawing lots. I volunteered.',
-        'There is a light at the bottom. It is very small. It is very patient.',
-        'The relief column never came. We stopped expecting it. We stopped remembering which country sent us.',
-        'I buried my sword at the edge so whoever comes next will know someone stood here.',
-        'The last order I gave was to let them go down, if they wanted. All of them did.',
-        'I am holding the pit. I am the pit. Let no one down.',
+        'An order took a vow: no speech, no song, no step louder than a breath. Only listening.',
+        'They built their house over the quarry because it was the quietest place they had found. It was not quiet.',
+        'Under the silence was a hum, and under the hum a melody so slow that one note lasted a season.',
+        'They wrote it down, one note a year, in a book with no words.',
+        'After two hundred years the book held two hundred notes. The abbot said it was only the opening.',
+        'A novice played every note on a reed flute in one afternoon. They threw her out, then followed her to hear it again.',
+        'It was a lullaby. Something very old was humming itself to sleep, or awake.',
+        'They dug a little every night, by hand, to hear the next bar sooner.',
+        'The last of them wrote: It is not one voice. It is every stone, each a note, and the gold is the key they are in.',
+        'The book ends on a blank page with a crystal pressed in it, and the page is warm.',
       ],
     },
     {
-      title: 'The Bone Readers',
+      title: 'The Tuners',
       fragments: [
-        'Our order reads the future in bones. The spine says how long. The ribs say how many.',
-        'Every bone we read pointed the same way. Down.',
-        'We built our temple over the place the bones pointed to and called it holy, because we were afraid to call it anything else.',
-        'The eldest reader dreamed of a gold eye opening in the dark. She did not wake.',
-        'We laid her bones out to read them. They spelled our own names.',
-        'Novices are told the eye is a god. Readers are told it is a door. The eldest knew better and said nothing.',
-        'The bones say it was here before there were bones.',
-        'We carved the eye into the doorway so it would know we were friendly. We did not know if it could tell.',
-        'The temple sank a finger’s width a year. We measured it. We prayed about it. We kept measuring.',
-        'Last reading: one gold eye, and under it, a world, and under that, another eye.',
+        'Long before bells there were tuners: people who grew crystals the way others grew wheat.',
+        'They planted seed stones in the dark and sang to them. A crystal grown to a song keeps the song.',
+        'Their cities were built of tuned stone. You could walk down a street and play it.',
+        'They grew a stone organ as long as a valley and played it once a generation.',
+        'Every pipe they grew leaned the same way, toward a point deep in the rock none of them had seen.',
+        'Some said it was a seed stone too. The first one, planted by no one.',
+        'Tuners did not break rock. They asked it, by singing, and it opened.',
+        'In time the songs they sang were not their own. They were answering.',
+        'The last tuner sang the city’s doors closed, and the stone grew over it, still in tune.',
+        'Break their crystals and you destroy nothing. You only let the note out.',
       ],
     },
     {
-      title: 'The Clockmakers',
+      title: 'The First Song',
       fragments: [
-        'The guild was asked a simple question by a rich patron: how many pieces is the world made of?',
-        'We built a machine to count them. Ten million, it said. We built a better machine. Ten million, exactly.',
-        'Too exact. Worlds are not exact. Something had made this one.',
-        'One of the ten million would not be counted. The machine skipped it every time, the way an eye skips its own blind spot.',
-        'The gears in that part of the machine wore smooth and golden, as if something warm had been turning them from inside.',
-        'We followed the skipped piece down through the floor of the workshop.',
-        'Our best apprentice built a ball that went only in straight lines. She said curiosity should not wander.',
-        'Down there, every clock we brought stopped at the same time and started again a little later than it should.',
-        'The patron arrived to collect his answer. He was older than the guild. He thanked us and went down alone.',
-        'Count again, he wrote in the ledger, after you find it. You will find one fewer. Then one more.',
+        'The first people to come here had no words. They had hands, and they clapped.',
+        'The cave clapped back. That was the first conversation.',
+        'They learned which walls answered high and which answered low, and marked the best echoes with red ochre.',
+        'A child struck two stones in a rhythm, and the cave kept it going after she stopped.',
+        'They came back only to make sound. Food could be found anywhere. This could not.',
+        'Someone blew across a hollow bone and the cave made it a chord. Nobody slept that night.',
+        'The deeper they went, the more the cave seemed to know their songs before they sang them.',
+        'They left their bone flutes in the deepest chamber, as a gift, or as a way to be remembered.',
+        'The flutes have turned to stone. The stone still plays them when the air moves right.',
+        'Every song you have ever heard began with someone clapping in the dark, waiting for an answer.',
       ],
     },
     {
-      title: 'Before People',
+      title: 'Before Ears',
       fragments: [
-        'Before there were diggers there was a sea, and before the sea there was dark, and in the dark, one point of gold.',
-        'Shelled things circled it for a hundred million years, spiralling their shells toward it without knowing why.',
-        'Rock settled around it like snow around a lamp post.',
-        'Green things grew on the rock where its light leaked through the cracks.',
-        'It was not waiting. Waiting is a thing people do. It was simply there, and things came.',
-        'Every creature that came close enough grew a little more curious, and its children more curious still.',
-        'The first animal to dig was not hungry. It only wanted to see.',
-        'The rock remembers every animal that tunnelled toward the light. Some of them are still in it, curled up, facing the same way.',
-        'By the time the first people arrived, the world had already been dug, filled, and dug again, many times.',
-        'The gold does not make worlds. It makes diggers. The worlds are just what diggers leave behind.',
+        'Before there were ears there was rock, and the rock was already singing.',
+        'Heat moved through it and it rang. Weight pressed down on it and it rang lower.',
+        'At the centre of the sound sat one point of gold, and everything around it tuned itself to it.',
+        'Crystals grew in the cracks the way frost grows on glass, each one cut to a note.',
+        'Seas came and went above it. The song went on underneath, slower than tides.',
+        'It was not waiting to be heard. Wanting to be heard is a thing people do. It was only singing.',
+        'The first creatures that could feel a tremor crept toward it. Their young could hear a little more.',
+        'Ears are what happens when a world listens long enough.',
+        'By the time anyone could hear it properly, it had been playing longer than there had been anyone.',
+        'The gold does not make worlds. It makes listeners. The worlds are what listeners dig on the way down.',
       ],
     },
     {
@@ -1455,14 +1463,14 @@ body.listening .hud > * { pointer-events: none; }
       fragments: [
         'You are not the first. You know that now.',
         'Every journal down here was written by someone who thought this layer was the bottom.',
-        'Every ball you send out comes back a little more like you: patient, stubborn, curious.',
-        'The relics are not lost. They were left. People leave things where they expect someone to come.',
-        'When you broke the first Golden Pixel, a world folded closed behind you. Someone is digging in it now.',
-        'The foreman, the shepherd, the keeper, the soldier, the reader, the clockmaker. They all heard it. So did you.',
-        'It does not say much. Only: deeper.',
-        'Some diggers stopped and cleared every pixel of their world first, so the next one would remember them. The next one always does.',
-        'There is no bottom. There is only the next world, and the dog who went first.',
-        'Leave something behind for whoever follows. Then go down.',
+        'Every ball you send out is a note. Together they play a song nobody has heard before, because you are the one playing it.',
+        'The relics are not lost. They were grown, and left where someone would find them.',
+        'When you broke the first Golden Pixel, a world folded shut behind you, still ringing. Someone is listening to it now.',
+        'The recordist, the choir, the bellfounder, the listeners, the tuners, the first clappers. They all heard it. So did you.',
+        'It does not say much. One note, held: deeper.',
+        'Some diggers cleared every pixel of their world before they left, so it would ring all the way through. The next one always hears it.',
+        'There is no bottom. There is only the next world, and the next verse.',
+        'Leave something singing for whoever follows. Then go down.',
       ],
     },
   ];
@@ -1482,7 +1490,8 @@ body.listening .hud > * { pointer-events: none; }
   const root = typeof window !== 'undefined' ? window : globalThis;
   const PQ = root.PQ;
   const D = PQ.DATA, T = D.T, MAT = D.MAT, BALLS = D.BALLS;
-  const W = D.W, H = D.H, MASK = D.TYPE_MASK, POI = D.POISON;
+  const W = D.W, H = D.H, MASK = D.TYPE_MASK;
+  const TRAIL = 16;                         // samples of each ball's last second, for Echo ghosts
   const TS = Math.log2(D.TILE);
   const B = {};
   BALLS.forEach((b, i) => { B[b.key] = i; });
@@ -1549,10 +1558,15 @@ body.listening .hud > * { pointer-events: none; }
     this.tilesY = Math.ceil(H / D.TILE);
     this.tileDirty = new Uint8Array(this.tilesX * this.tilesY).fill(1);
     this.ovDirty = new Uint8Array(this.tilesX * this.tilesY).fill(1);
-    this.poison = new Int32Array(D.POISON_CAP);
-    this.poisonGen = new Uint8Array(D.POISON_CAP);
-    this.pn = 0;
-    this.poisonT = 0;
+    this.chord = 0;                                       // the chord playing now (a scale degree); see inChord
+    this.heard = 0;                                       // s since the music last set the chord
+    this.rings = [];                                      // Gong rings spreading out
+    this.echoQ = []; this.echoH = 0;                      // Echo strikes waiting: [time, x, y, dx, dy, amount, mult, left]
+    this.pn = 0;                                          // echoes waiting (the music hears this)
+    this.trail = new Float32Array(M * TRAIL * 2);         // each ball's last second, for the Echo ghosts
+    this.trailI = 0; this.trailT = 0;
+    this.partner = new Int32Array(M).fill(-1);            // String pairs
+    this.stringT = 0; this.humT = 0;
     this.fxI = new Int32Array(256); this.fxT = new Uint8Array(256); this.fxn = 0;
     this.events = [];
     this.hist = [state.earned];
@@ -1587,13 +1601,17 @@ body.listening .hud > * { pointer-events: none; }
     this.tDmg = BALLS.map(b => Math.round(b.dmg * Math.pow(TR.dmg.mult, s.up[b.key].dmg)) * (fx('glass') ? D.GLASS_DMG : 1));
     this.tMult = BALLS.map(b => Math.pow(D.MILESTONE_MULT, milestone(s.owned[b.key]).lv));
     this.tSpd = BALLS.map(b => b.speed * (1 + TR.spd.step * s.up[b.key].spd) * (fx('rush') ? D.RUSH_SPEED : 1));
-    this.pierceMax = BALLS.map(b => b.key === 'lancer' ? sp('lancer') : (b.key === 'drill' || b.key === 'seeker') ? 255 : 0);
-    this.bombR = sp('bomb');
-    this.venomGen = 4 + 2 * sp('venom');
-    this.venomP = 0.42 + 0.03 * sp('venom');
-    this.arcs = sp('spark');
-    this.midas = sp('midas');
-    this.steer = sp('seeker');
+    this.pierceMax = BALLS.map(b => b.key === 'lancer' ? sp('lancer') : b.key === 'spark' ? D.STRING_PIERCE : (b.key === 'drill' || b.key === 'seeker') ? 255 : 0);
+    this.ringReach = D.GONG_REACH + 8 * sp('bomb');
+    this.ringRays = D.GONG_RAYS * (1 + sp('bomb'));
+    this.ringDepth = 1 + (sp('bomb') >> 1);               // pixels deep each part of the ring strikes
+    this.echoes = sp('venom');
+    this.stringLen = sp('spark');
+    this.harm = sp('midas');
+    this.humR = sp('drill');
+    this.callR = sp('seeker');
+    this.steer = 1;                                       // how tightly a Siren aims at the gold
+    this.arcs = 0;                                        // Thunder Roll arcs per bolt (set while it strikes)
     this.tapDmg = Math.round(3 * Math.pow(1.6, s.global.tap)) * (fx('glass') ? D.GLASS_DMG : 1);
     this.tapR = Math.min(10, 2 + Math.floor(s.global.tap / 3));
     this.discount = 1 - perkVal(s, 'cheap');
@@ -1684,6 +1702,7 @@ body.listening .hud > * { pointer-events: none; }
     this.cd[k] = 0;
     this.pl[k] = this.pierceMax[t];
     this.lastCell[k] = -1;
+    for (let q = 0; q < TRAIL; q++) { this.trail[(k * TRAIL + q) * 2] = x; this.trail[(k * TRAIL + q) * 2 + 1] = y; }
     return true;
   };
 
@@ -1737,57 +1756,6 @@ body.listening .hud > * { pointer-events: none; }
     }
   };
 
-  P.explode = function (cx, cy, R, amount, mult) {
-    const cells = this.w.cells;
-    for (let dy = -R; dy <= R; dy++) {
-      const y = cy + dy;
-      if (y < 0 || y >= H) continue;
-      const span = Math.floor(Math.sqrt(R * R - dy * dy));
-      for (let dx = -span; dx <= span; dx++) {
-        const x = cx + dx;
-        if (x < 0 || x >= W || !(cells[y * W + x] & MASK)) continue;
-        this.hit(x, y, amount, mult);
-      }
-    }
-  };
-
-  P.poisonCell = function (x, y, gen) {
-    const cells = this.w.cells, i = y * W + x, c = cells[i];
-    if ((c & POI) || this.pn >= D.POISON_CAP) return;
-    const t = c & MASK;
-    if (!t || MAT[t].hard) return;
-    cells[i] = c | POI;
-    this.poison[this.pn] = i;
-    this.poisonGen[this.pn] = gen;
-    this.pn++;
-    this.dirty(x, y);
-  };
-
-  P.tickPoison = function () {
-    const cells = this.w.cells, P_ = this.poison, G = this.poisonGen;
-    const amt = Math.max(1, this.tDmg[B.venom]), mult = this.tMult[B.venom];
-    this.src = B.venom;
-    const n0 = this.pn;
-    let j = 0;
-    for (let q = 0; q < n0; q++) {
-      const i = P_[q], g = G[q];
-      if (!(cells[i] & POI)) continue;      // broken by something else
-      const x = i % W, y = (i / W) | 0;
-      if (this.hit(x, y, amt, mult) === 1) {
-        if (g < this.venomGen) {
-          if (x > 0 && this.rng() < this.venomP) this.poisonCell(x - 1, y, g + 1);
-          if (x < W - 1 && this.rng() < this.venomP) this.poisonCell(x + 1, y, g + 1);
-          if (y > 0 && this.rng() < this.venomP) this.poisonCell(x, y - 1, g + 1);
-          if (y < H - 1 && this.rng() < this.venomP) this.poisonCell(x, y + 1, g + 1);
-        }
-      } else {
-        P_[j] = i; G[j] = g; j++;
-      }
-    }
-    for (let q = n0; q < this.pn; q++) { P_[j] = P_[q]; G[j] = G[q]; j++; }
-    this.pn = j;
-  };
-
   // Every ball impact is also offered to the music (sim.snd, see audio.js): who hit what, and did it break.
   P.ballHit = function (k, t, cx, cy) {
     const snd = this.snd;
@@ -1802,16 +1770,146 @@ body.listening .hud > * { pointer-events: none; }
     this.src = t;
     if (t === B.bomb && this.cd[k] <= 0) {
       this.cd[k] = D.BOMB_COOLDOWN;
-      this.explode(cx, cy, this.bombR, this.tDmg[t] * 2, this.tMult[t]);
-      return (this.w.cells[cy * W + cx] & MASK) === T.RELIC ? -1 : 0;
+      this.ring(this.bx[k], this.by[k], this.tDmg[t] * 3, this.tMult[t]);
     }
-    const r = this.hit(cx, cy, this.tDmg[t], (t === B.midas ? this.midas : 1) * this.tMult[t]);
-    if (t === B.venom && r === 0) this.poisonCell(cx, cy, 0);
-    if (t === B.spark && this.cd[k] <= 0) { this.cd[k] = D.SPARK_COOLDOWN; this.spark(cx, cy, this.tDmg[t], this.tMult[t]); }
+    const r = this.hit(cx, cy, this.tDmg[t], (t === B.midas && this.inChord(cx, cy) ? this.harm : 1) * this.tMult[t]);
+    if (t === B.venom && r >= 0 && r !== 2) this.echo(cx, cy, this.vx[k], this.vy[k], this.tDmg[t], this.tMult[t], this.echoes);
     return r;
   };
 
-  // Lightning: arcs jump from a hit to rock nearby and strike it.
+  // ---- Harmonic: a pixel's note, as the music plays it (audio.js hashes the same way) ----
+  function noteHash(x, y) {
+    let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return (h ^ (h >>> 16)) >>> 0;
+  }
+  // In the chord: the pixel's scale degree is the chord's root, third or fifth.
+  P.inChord = function (x, y) {
+    const r = ((noteHash(x, y) % 7 - this.chord) % 7 + 7) % 7;
+    return r === 0 || r === 2 || r === 4;
+  };
+  // The music tells the sim which chord is playing (the Harmonic pays on it). Without it the
+  // sim keeps its own changes, every 4 s, so a quiet game plays the same.
+  P.syncChord = function (chord) {
+    this.heard = 0;
+    this.chord = chord;
+  };
+
+  // ---- Gong: a ring of sound from where it struck, out through open space ----
+  P.ring = function (x, y, dmg, mult) {
+    if (this.rings.length >= 300) return;
+    const n = this.ringRays, rot = this.rng() * Math.PI * 2, dir = new Float32Array(n * 2);
+    for (let q = 0; q < n; q++) { const a = rot + q * Math.PI * 2 / n; dir[q * 2] = Math.cos(a); dir[q * 2 + 1] = Math.sin(a); }
+    this.rings.push({ x, y, r: 0.5, R: this.ringReach, dmg, mult, n, dir, alive: new Uint8Array(n).fill(this.ringDepth), heard: false });
+  };
+  P.tickRings = function (dt) {
+    const cells = this.w.cells, keep = [];
+    this.src = B.bomb;
+    for (const g of this.rings) {
+      const r1 = Math.min(g.R, g.r + D.GONG_SPEED * dt);
+      for (let q = 0; q < g.n; q++) {
+        if (!g.alive[q]) continue;
+        const dx = g.dir[q * 2], dy = g.dir[q * 2 + 1];
+        for (let rr = g.r; rr < r1; rr += 1) {
+          const x = (g.x + dx * rr) | 0, y = (g.y + dy * rr) | 0;
+          if (x < 0 || y < 0 || x >= W || y >= H) { g.alive[q] = 0; break; }
+          const mat = cells[y * W + x] & MASK;
+          if (!mat) continue;
+          const res = this.hit(x, y, g.dmg, g.mult);
+          if (!g.heard && this.snd) { g.heard = true; this.snd.add(B.bomb, mat, res === 1, x, y); }
+          if (--g.alive[q] === 0 || res !== 1) { g.alive[q] = 0; break; }   // a deeper ring goes on into what it broke
+        }
+      }
+      g.r = r1;
+      if (r1 < g.R) keep.push(g);
+    }
+    this.rings = keep;
+  };
+
+  // ---- Echo: the strike again, a moment later, one pixel deeper ----
+  P.echo = function (x, y, vx, vy, amount, mult, left) {
+    if (left <= 0 || this.echoQ.length - this.echoH >= D.ECHO_CAP) return;
+    const dx = Math.abs(vx) > 0.38 ? Math.sign(vx) : 0, dy = Math.abs(vy) > 0.38 ? Math.sign(vy) : 0;
+    this.echoQ.push([this.s.playTime + D.ECHO_DELAY, x, y, dx, dy, amount, mult, left]);
+  };
+  P.tickEchoes = function () {
+    const Q = this.echoQ, cells = this.w.cells, now = this.s.playTime;
+    this.src = B.venom;
+    while (this.echoH < Q.length && Q[this.echoH][0] <= now) {
+      const e = Q[this.echoH++];
+      let x = e[1], y = e[2];
+      if (!(cells[y * W + x] & MASK)) { x += e[3]; y += e[4]; }   // broken already: the next one in
+      if (x < 0 || y < 0 || x >= W || y >= H || !(cells[y * W + x] & MASK)) continue;
+      const amt = e[5] < 1 ? (this.rng() < e[5] ? 1 : 0) : Math.round(e[5]);
+      if (amt) this.hit(x, y, amt, e[6]);
+      if (e[7] > 1) Q.push([now + D.ECHO_DELAY, x, y, e[3], e[4], e[5] * D.ECHO_FADE, e[6], e[7] - 1]);
+    }
+    if (this.echoH > 4096) { Q.splice(0, this.echoH); this.echoH = 0; }
+    this.pn = Q.length - this.echoH;
+  };
+
+  // ---- String: pairs, and the rock between them ----
+  // Pairs are Strings in the order they were bought; the last one waits for a partner.
+  P.pairStrings = function () {
+    const bt = this.bt, n = this.n, pt = this.partner;
+    let open = -1;
+    for (let k = 0; k < n; k++) {
+      pt[k] = -1;
+      if (bt[k] !== B.spark) continue;
+      if (open < 0) open = k;
+      else { pt[k] = open; pt[open] = k; open = -1; }
+    }
+  };
+  P.tickStrings = function () {
+    const n = this.n, bt = this.bt, pt = this.partner, cells = this.w.cells, L = this.stringLen;
+    const dmg = this.tDmg[B.spark], mult = this.tMult[B.spark];
+    this.src = B.spark;
+    for (let k = 0; k < n; k++) {
+      const j = pt[k];
+      if (bt[k] !== B.spark || j < k) continue;
+      const x0 = this.bx[k], y0 = this.by[k], dx = this.bx[j] - x0, dy = this.by[j] - y0, d = Math.hypot(dx, dy);
+      if (d > L || d < 2) continue;
+      // It cuts a line two pixels wide: the pixels on it and the ones beside it.
+      let heard = false;
+      const sx = Math.abs(dx) > Math.abs(dy) ? 0 : 1, sy = 1 - sx;
+      for (let q = 1, m = Math.ceil(d); q < m; q++) {
+        for (let o = 0; o < 2; o++) {
+          const x = ((x0 + dx * q / m) | 0) + sx * o, y = ((y0 + dy * q / m) | 0) + sy * o;
+          if (x >= W || y >= H) continue;
+          const mat = cells[y * W + x] & MASK;
+          if (!mat) continue;
+          const res = this.hit(x, y, dmg, mult);
+          if (!heard && res === 1 && this.snd) { heard = true; this.snd.add(B.spark, mat, true, x, y); }
+        }
+      }
+    }
+  };
+
+  // ---- Drone: everything within its hum wears away ----
+  P.tickHum = function () {
+    const n = this.n, bt = this.bt, cells = this.w.cells, R = this.humR, dmg = this.tDmg[B.drill], mult = this.tMult[B.drill];
+    this.src = B.drill;
+    for (let k = 0; k < n; k++) {
+      if (bt[k] !== B.drill) continue;
+      const cx = this.bx[k] | 0, cy = this.by[k] | 0;
+      let heard = false;
+      for (let dy = -R; dy <= R; dy++) {
+        const y = cy + dy;
+        if (y < 0 || y >= H) continue;
+        const span = Math.floor(Math.sqrt(R * R - dy * dy));
+        for (let dx = -span; dx <= span; dx++) {
+          const x = cx + dx;
+          if (x < 0 || x >= W) continue;
+          const mat = cells[y * W + x] & MASK;
+          if (!mat) continue;
+          const res = this.hit(x, y, dmg, mult);
+          if (!heard && this.snd) { heard = true; this.snd.add(B.drill, mat, res === 1, x, y); }
+        }
+      }
+    }
+  };
+
+  // Thunder Roll: arcs jump from a bolt to rock nearby and strike it.
   P.spark = function (cx, cy, amount, mult) {
     const cells = this.w.cells, R = D.SPARK_REACH;
     for (let a = 0; a < this.arcs; a++) {
@@ -1834,11 +1932,37 @@ body.listening .hud > * { pointer-events: none; }
     const seekGold = !this.s.found;
     const wh = this.effectOn('whirl') ? this.s.effects.whirl : null, turnMax = 2.6 * dt;
     const gx = this.w.gold.x + 0.5, gy = this.w.gold.y + 0.5;
+    // Sirens call the balls around them (the first SIREN_LISTEN of them, in a big swarm).
+    const sirens = [];
+    for (let k = 0; k < n && sirens.length < D.SIREN_LISTEN; k++) if (bt[k] === B.seeker) sirens.push(k);
+    const call2 = this.callR * this.callR, callTurn = D.SIREN_TURN * dt;
+    const pt = this.partner, L = this.stringLen;
     for (let k = 0; k < n; k++) {
       const t = bt[k];
       let x = bx[k], y = by[k], vx = VX[k], vy = VY[k];
       if (cd[k] > 0) cd[k] -= dt;
-      if (wh && t !== B.lancer && !(t === B.seeker && seekGold)) {
+      const lancer = t === B.lancer;
+      // Steering: toward a Siren, or a String's partner once the string pulls taut. Not a
+      // Pulse: it keeps to the axes.
+      let tx = 0, ty = 0, turn = 0;
+      if (t !== B.seeker && !lancer && sirens.length) {
+        let best = call2;
+        for (const j of sirens) {
+          const dx = bx[j] - x, dy = by[j] - y, d2 = dx * dx + dy * dy;
+          if (d2 < best && d2 > 16) { best = d2; tx = dx; ty = dy; turn = callTurn; }
+        }
+      }
+      if (t === B.spark && pt[k] >= 0) {
+        const dx = bx[pt[k]] - x, dy = by[pt[k]] - y;
+        if (dx * dx + dy * dy > 0.36 * L * L) { tx = dx; ty = dy; turn = 2.2 * dt; }
+      }
+      if (turn) {
+        let a = Math.atan2(vx * ty - vy * tx, vx * tx + vy * ty);
+        a = a > turn ? turn : a < -turn ? -turn : a;
+        const c = Math.cos(a), sn = Math.sin(a), nvx = vx * c - vy * sn;
+        vy = vx * sn + vy * c; vx = nvx;
+      }
+      if (wh && !lancer && !(t === B.seeker && seekGold)) {
         // Whirlpool: steer toward the eye and around it, so the swarm spirals in.
         const dx = wh.x - x, dy = wh.y - y, d = Math.hypot(dx, dy) || 1;
         const wx = (dx - dy * 0.9) / d, wy = (dy + dx * 0.9) / d;
@@ -1847,9 +1971,8 @@ body.listening .hud > * { pointer-events: none; }
         const c = Math.cos(a), sn = Math.sin(a), nvx = vx * c - vy * sn;
         vy = vx * sn + vy * c; vx = nvx;
       }
-      const lancer = t === B.lancer;
-      // A Lancer turns now and then even with nothing to hit, so it never just paces a lane.
-      if (lancer && rng() < D.LANCER_WANDER * dt) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
+      // A Pulse turns now and then even with nothing to hit, so it never just paces a lane.
+      if (lancer && rng() < D.PULSE_WANDER * dt) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
       let dist = this.tSpd[t] * dt, hits = 0;
       while (dist > 0 && hits < 3) {
         const st = dist < 0.9 ? dist : 0.9;
@@ -1857,8 +1980,8 @@ body.listening .hud > * { pointer-events: none; }
         let nx = x + vx * st, ny = y + vy * st, edge = false;
         if (nx < 0) { nx = -nx; vx = -vx; edge = true; } else if (nx >= W) { nx = 2 * W - nx - 0.01; vx = -vx; edge = true; }
         if (ny < 0) { ny = -ny; vy = -vy; edge = true; } else if (ny >= H) { ny = 2 * H - ny - 0.01; vy = -vy; edge = true; }
-        // The map's edge counts as a bounce for a Lancer's turn, like rock does.
-        if (edge && lancer && rng() < D.LANCER_TURN) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
+        // The map's edge counts as a bounce for a Pulse's turn, like rock does.
+        if (edge && lancer && rng() < D.PULSE_TURN) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
         const cx = nx | 0, cy = ny | 0;
         if (!(cells[cy * W + cx] & MASK)) { x = nx; y = ny; continue; }
         hits++;
@@ -1879,9 +2002,9 @@ body.listening .hud > * { pointer-events: none; }
         }
         pl[k] = this.pierceMax[t];
         if (lancer) {
-          if (rng() < D.LANCER_TURN) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
+          if (rng() < D.PULSE_TURN) { const sg = rng() < 0.5 ? 1 : -1, tmp = vx; vx = -vy * sg; vy = tmp * sg; }
         } else if (t === B.seeker && seekGold) {
-          // Re-aim at the gold after every bounce. Instinct narrows the spread.
+          // Re-aim at the gold after every bounce.
           const a = Math.atan2(gy - y, gx - x) + (rng() - 0.5) * 1.8 / this.steer;
           vx = Math.cos(a); vy = Math.sin(a);
         } else {
@@ -1899,10 +2022,23 @@ body.listening .hud > * { pointer-events: none; }
   P.step = function (dt) {
     const s = this.s;
     s.playTime += dt;
+    this.heard += dt;
+    if (this.heard > 1) this.chord = [0, 5, 3, 4][Math.floor(s.playTime / 4) & 3];   // no music: keep our own changes
+    this.pairStrings();
     this.moveBalls(dt);
+    this.tickRings(dt);
+    this.tickEchoes();
+    this.stringT += dt;
+    if (this.stringT >= D.STRING_TICK) { this.stringT -= D.STRING_TICK; this.tickStrings(); }
+    this.humT += dt;
+    if (this.humT >= D.HUM_TICK) { this.humT -= D.HUM_TICK; this.tickHum(); }
+    this.trailT += dt;
+    if (this.trailT >= 1 / TRAIL) {
+      this.trailT -= 1 / TRAIL;
+      const q = this.trailI = (this.trailI + 1) % TRAIL, tr = this.trail;
+      for (let k = 0; k < this.n; k++) { tr[(k * TRAIL + q) * 2] = this.bx[k]; tr[(k * TRAIL + q) * 2 + 1] = this.by[k]; }
+    }
     this.tickEffects(dt);
-    this.poisonT += dt;
-    while (this.poisonT >= D.POISON_TICK) { this.poisonT -= D.POISON_TICK; this.tickPoison(); }
     this.rateT += dt;
     if (this.rateT >= 1) {
       this.rateT -= 1;
@@ -1912,6 +2048,12 @@ body.listening .hud > * { pointer-events: none; }
       for (let i = 0; i < this.acc.length; i++) { this.typeRate[i] += (this.acc[i] - this.typeRate[i]) * 0.2; this.acc[i] = 0; }
       this.trackLast();
     }
+  };
+
+  // Where ball k was about a second ago: its Echo ghost.
+  P.ghost = function (k) {
+    const q = (k * TRAIL + (this.trailI + 1) % TRAIL) * 2;
+    return { x: this.trail[q], y: this.trail[q + 1] };
   };
 
   // Lit well enough to act on: the same line a relic counts as found at.
@@ -2116,8 +2258,8 @@ body.listening .hud > * { pointer-events: none; }
       this.lastCell[k] = -1;
     }
   };
-  // One bolt of the Storm: a lit spot on the screen, and arcs into the rock around it. Paid
-  // like the pickaxe (it is the player's), heard as Lightning.
+  // One bolt of the Thunder Roll: a lit spot on the screen, and arcs into the rock around it.
+  // Paid like the pickaxe (it is the player's), heard as a String.
   P.bolt = function (r) {
     for (let tries = 0; tries < 8; tries++) {
       const x = (r.x0 + this.rng() * (r.x1 - r.x0)) | 0, y = (r.y0 + this.rng() * (r.y1 - r.y0)) | 0;
@@ -2201,6 +2343,11 @@ body.listening .hud > * { pointer-events: none; }
       this.spawn(t, x, y);
       const vx = arr[o + 2], vy = arr[o + 3], l = Math.hypot(vx, vy);
       if (l > 0.5) { this.vx[k] = vx / l; this.vy[k] = vy / l; }
+      // A Pulse keeps to the axes (one saved while it could move any way snaps to the nearest).
+      if (t === B.lancer && this.vx[k] && this.vy[k]) {
+        const ax = Math.abs(this.vx[k]) >= Math.abs(this.vy[k]);
+        this.vx[k] = ax ? Math.sign(this.vx[k]) : 0; this.vy[k] = ax ? 0 : Math.sign(this.vy[k]);
+      }
     }
   };
   // Balls the player owns but that are not in the world (first start, lost save).
@@ -3435,6 +3582,8 @@ registerProcessor('pocket-six', PocketSix);
     const pan = far < 1 ? (x < (v.x0 + v.x1) / 2 ? -0.9 : 0.9) : clamp(((x - v.x0) / w) * 1.8 - 0.9, -0.9, 0.9);
     const vel = (broke ? 1 : 0.55) * far * (0.85 + this.rnd() * 0.15);
     const bright = MAT_BRIGHT[mat] * (far < 1 ? 0.6 : 1);
+    // The picture is lit by the music: tell it where and when this note sounds.
+    if (this.onNote && far >= 1) { const own = this.voiceFor[ins.name]; if (!own || own.v !== 'off') this.onNote(t, when, x, y, vel); }
     this.note(when, this.midi(d), vel, pan, ins, t, bright, !broke);
     if (ins.grace) this.note(when + this.stepDur / 2, this.midi(this.snap(d + 2)), vel * 0.6, -pan, ins, t, bright, true);
     const add = ORE_ADD[mat];
@@ -3904,6 +4053,11 @@ registerProcessor('pocket-six', PocketSix);
         volume: s.vol, drums: s.drums, gravity: s.gravity, spin: s.spin, style: s.style,
       });
       m.seed = game.world.seed;
+      // Light the cave where each note sounds, when it reaches the ear.
+      m.eng.onNote = (t, when, x, y, vel) => {
+        const r = game.renderer, lat = m.ctx.outputLatency || m.ctx.baseLatency || 0;
+        if (r) r.ping(x + 0.5, y + 0.5, t, vel, Math.max(0, when - m.ctx.currentTime + lat));
+      };
       if (m.rec) m.eng.out.connect(m.rec.dest);
       game.sim.snd = on() ? m.eng : null;
       loadVoices();
@@ -4032,7 +4186,9 @@ registerProcessor('pocket-six', PocketSix);
       if (!sim.snd || !m.ctx) return;
       const c = r.cam, hw = r.cssW / 2 / c.z, hh = r.cssH / 2 / c.z;
       sim.snd.setView(c.x - hw, c.y - hh, c.x + hw, c.y + hh, c.z);
-      sim.snd.frame(dt, m.ctx.currentTime, sim);
+      const e = sim.snd;
+      e.frame(dt, m.ctx.currentTime, sim);
+      sim.syncChord(e.chord);
       if (m.listening) listenTick();
     };
     m.event = function (e) { if (game.sim.snd) game.sim.snd.event(e); };
@@ -4173,19 +4329,45 @@ registerProcessor('pocket-six', PocketSix);
       if (game.ui) game.ui.toast('Saved ' + name, 3600);
     }
 
-    // The mute button on the main screen: the same switch as "Music from the balls".
+    // The sound button on the main screen opens a little panel: mute (the same switch as
+    // "Music from the balls") and the volume (the same as the World tab's slider).
     const SPEAKER = '<path d="M3 8h3l4-3v10l-4-3H3z"/>';
     const ICON_ON = SPEAKER + '<path d="M13 7.5a3.5 3.5 0 0 1 0 5M15.5 5a7 7 0 0 1 0 10"/>';
     const ICON_OFF = SPEAKER + '<path d="M13 8l4 4M17 8l-4 4"/>';
+    const svg = body => `<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+    const volume = () => Math.round((st().vol == null ? 0.8 : st().vol) * 100);
     function muteButton() {
-      const b = $('btnMute'), off = st().sound === false, label = off ? 'Turn the music on' : 'Mute the music';
-      b.innerHTML = `<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${off ? ICON_OFF : ICON_ON}</svg>`;
-      b.setAttribute('aria-pressed', off); b.setAttribute('aria-label', label); b.title = label;
+      const off = st().sound === false, b = $('btnMute'), mb = $('volMute');
+      b.innerHTML = svg(off ? ICON_OFF : ICON_ON);
       b.classList.toggle('off', off);
+      mb.innerHTML = svg(off ? ICON_OFF : ICON_ON);
+      mb.classList.toggle('off', off);
+      mb.setAttribute('aria-pressed', off);
+      mb.setAttribute('aria-label', off ? 'Turn the music on' : 'Mute the music');
+      mb.title = mb.getAttribute('aria-label');
+      $('volSlider').value = volume(); $('volVal').textContent = volume();
       const box = $('optSound');
       if (box) box.checked = !off;
     }
-    $('btnMute').addEventListener('click', () => { m.set('sound', st().sound === false); muteButton(); });
+    function showVolume(open) {
+      $('volPop').hidden = !open;
+      $('btnMute').setAttribute('aria-expanded', open);
+      if (open) muteButton();
+    }
+    $('btnMute').addEventListener('click', () => showVolume($('volPop').hidden));
+    $('volMute').addEventListener('click', () => m.set('sound', st().sound === false));
+    $('volSlider').addEventListener('input', e => {
+      const v = +e.target.value;
+      m.set('vol', v / 100);
+      $('volVal').textContent = v;
+      if (v > 0 && st().sound === false) m.set('sound', true);   // turning it up means you want to hear it
+      const w = $('optVol');
+      if (w) w.value = v;
+    });
+    // A tap anywhere else closes it.
+    document.addEventListener('pointerdown', e => {
+      if (!$('volPop').hidden && !e.target.closest('#volPop, #btnMute')) showVolume(false);
+    }, true);
     m.muteButton = muteButton;
     muteButton();
 
@@ -4217,21 +4399,47 @@ registerProcessor('pocket-six', PocketSix);
   const lerp = (a, b, t) => a + (b - a) * t;
 
   // The void: open space, and rock that is solid all round (or still unexplored).
-  const BG = pack(14, 19, 15), DEEP = pack(8, 11, 9);
+  const BG = pack(6, 8, 13), DEEP = pack(3, 4, 7);
   const RELIC_COL = D.MAT[T.RELIC].col, UP_COL = pack(...D.MAT[T.UPGRADE].col);
 
-  // Exposed rock glows in its colour. index = type << 5 | poisoned << 4 | crack stage << 2 | glow
-  // glow 2 = touches open space, 1 = one pixel further in.
+  // Crystal: the rock is cut into facets, from a 512 px map that tiles (a Voronoi of 8 px cells).
+  // A facet's edge (shade 0) catches the light; faces run 1 (dark) .. 7 (bright), lit from the top left.
+  const FT = 512, FC = 8;
+  function buildFacets() {
+    const G = FT / FC, jx = new Float32Array(G * G), jy = new Float32Array(G * G), lum = new Float32Array(G * G);
+    let a = 0x2f6b9d3;
+    const rnd = () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    for (let g = 0; g < G * G; g++) { jx[g] = 1 + rnd() * (FC - 2); jy[g] = 1 + rnd() * (FC - 2); lum[g] = rnd(); }
+    const out = new Uint8Array(FT * FT);
+    for (let y = 0; y < FT; y++) for (let x = 0; x < FT; x++) {
+      const px = x + 0.5, py = y + 0.5, cx = (x / FC) | 0, cy = (y / FC) | 0;
+      let f1 = 1e9, f2 = 1e9, bx = 0, by = 0, bl = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const ux = cx + dx, uy = cy + dy, g = ((uy + G) % G) * G + (ux + G) % G;
+        const sx = ux * FC + jx[g], sy = uy * FC + jy[g], d = (px - sx) * (px - sx) + (py - sy) * (py - sy);
+        if (d < f1) { f2 = f1; f1 = d; bx = sx; by = sy; bl = lum[g]; } else if (d < f2) f2 = d;
+      }
+      if (Math.sqrt(f2) - Math.sqrt(f1) < 0.9) { out[y * FT + x] = 0; continue; }
+      const lit = Math.max(-1, Math.min(1, ((bx - px) + (by - py)) * 0.7 / (FC * 0.6)));
+      out[y * FT + x] = 1 + Math.min(6, ((bl * 0.6 + 0.4 * (0.5 + 0.5 * lit)) * 7) | 0);
+    }
+    return out;
+  }
+  const FACET = buildFacets();
+  const SHADE = [1, 0.35, 0.47, 0.59, 0.71, 0.83, 0.94, 1.05];
+
+  // index = (type << 5 | poisoned << 4 | crack stage << 2 | glow) << 3 | facet shade.
+  // glow 2 = touches open space, 1 = one pixel further in, 0 = deep inside (seen, but dim).
   function buildPalette() {
-    const pal = new Uint32Array(16 * 32).fill(DEEP);
-    const glow = [0, 0.4, 1], crack = [1, 0.8, 0.62, 0.46];
+    const pal = new Uint32Array(16 * 32 * 8).fill(DEEP);
+    const face = [0.24, 0.48, 0.8], edge = [0.42, 0.74, 1], white = [0, 0.08, 0.35], crack = [1, 0.8, 0.62, 0.46];
     MAT.forEach(m => {
       if (!m.col) return;
-      for (let p = 0; p < 2; p++) for (let st = 0; st < 4; st++) for (let gl = 1; gl < 3; gl++) {
+      for (let p = 0; p < 2; p++) for (let st = 0; st < 4; st++) for (let gl = 0; gl < 3; gl++) for (let sh = 0; sh < 8; sh++) {
         let [r, g, b] = m.col.map(c => c * crack[st]);
         if (p) { r = lerp(r, 90, 0.55); g = lerp(g, 255, 0.55); b = lerp(b, 110, 0.55); }
-        const k = glow[gl];
-        pal[(m.id << 5) | (p << 4) | (st << 2) | gl] = pack(lerp(8, r, k), lerp(11, g, k), lerp(9, b, k));
+        const k = sh ? face[gl] * SHADE[sh] : edge[gl], w = sh ? 0 : white[gl] * crack[st];
+        pal[(((m.id << 5) | (p << 4) | (st << 2) | gl) << 3) | sh] = pack(lerp(r * k, 255, w), lerp(g * k, 255, w), lerp(b * k, 255, w));
       }
     });
     return pal;
@@ -4254,7 +4462,7 @@ registerProcessor('pocket-six', PocketSix);
     this.pal = buildPalette();
     this.stage = buildStageLUT();
     this.relicCol = [];
-    for (let f = 0; f < 4; f++) this.relicCol.push(pack(...RELIC_COL.map(c => lerp(14, c, (f + 1) / 4))));
+    for (let f = 0; f < 4; f++) for (let sh = 0; sh < 8; sh++) this.relicCol.push(pack(...RELIC_COL.map(c => lerp(6, c, (f + 1) / 4) * (sh ? 0.55 + 0.45 * SHADE[sh] : 1.05))));
     this.goldCol = pack(255, 214, 64);
 
     this.cache = new Map();
@@ -4278,6 +4486,31 @@ registerProcessor('pocket-six', PocketSix);
     this.radar = 0;
     this.safeTop = 0;
     this.safeBottom = 1;
+
+    // Light: the cave is dark, and lit where the music plays (ping), around each ball, and
+    // where rock breaks. Drawn at a quarter of the screen's size and smoothed up.
+    this.dark = document.createElement('canvas');
+    this.darkCtx = this.dark.getContext('2d');
+    this.lights = [];
+    this.lightMode = 'sound';          // 'sound', or 'full' to light the whole cave
+    this.byNotes = false;              // true while the music plays: then notes light the cave
+    this.sunlit = 0;                   // extra light while Golden Chord runs (0..1)
+    this.lightSprite = sprite('255,255,255');
+    this.tints = D.BALLS.map(b => sprite(rgb(b.color))).concat([sprite('109,255,124'), sprite('220,230,255')]);
+  }
+
+  const LS = 4;                        // screen px per light-map px
+  const MAX_LIGHTS = 320;
+  const rgb = hex => [1, 3, 5].map(k => parseInt(hex.slice(k, k + 2), 16)).join(',');
+  // A soft round light, white or tinted, 64 px across.
+  function sprite(c) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const g = cv.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, `rgba(${c},1)`); gr.addColorStop(0.3, `rgba(${c},0.75)`);
+    gr.addColorStop(0.65, `rgba(${c},0.25)`); gr.addColorStop(1, `rgba(${c},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    return cv;
   }
 
   const R = Renderer.prototype;
@@ -4288,6 +4521,8 @@ registerProcessor('pocket-six', PocketSix);
     this.cssW = Math.max(1, r.width); this.cssH = Math.max(1, r.height); this.dpr = dpr;
     this.canvas.width = Math.round(this.cssW * dpr);
     this.canvas.height = Math.round(this.cssH * dpr);
+    this.dark.width = Math.ceil(this.cssW / LS) + 1;
+    this.dark.height = Math.ceil(this.cssH / LS) + 1;
     this.clampCam();
   };
 
@@ -4379,7 +4614,8 @@ registerProcessor('pocket-six', PocketSix);
     if (fog < 96) return DEEP;
     if (!t) return BG;
     const f = fog >= 255 ? 3 : (fog - 96) * 4 / 160 | 0;
-    if (t === T.RELIC) return this.relicCol[f];
+    const fi = ((y & (FT - 1)) << 9) | (x & (FT - 1));
+    if (t === T.RELIC) return this.relicCol[(f << 3) | FACET[fi]];
     let tt = t;
     if (t === T.GOLD) {
       if (this.exposed(x, y)) return this.goldCol;
@@ -4387,10 +4623,9 @@ registerProcessor('pocket-six', PocketSix);
       tt = left && left !== T.GOLD && left !== T.RELIC && left !== T.UPGRADE ? left : T.BASALT;
     }
     const gl = this.glow(i, x, y);
-    if (!gl) return DEEP;
+    if (!gl && f < 3) return DEEP;
     const d = this.w.dmg[i];
-    const col = this.pal[(tt << 5) | ((c >> 7) << 4) | ((d && t !== T.GOLD ? this.stage[(tt << 8) | d] : 0) << 2) | (f < 2 && gl === 2 ? 1 : gl)];
-    return col;
+    return this.pal[(((tt << 5) | ((c >> 7) << 4) | ((d && t !== T.GOLD ? this.stage[(tt << 8) | d] : 0) << 2) | (f < 2 && gl === 2 ? 1 : gl)) << 3) | FACET[fi]];
   };
 
   // Ignoring fog (the relic preview uses this).
@@ -4516,15 +4751,117 @@ registerProcessor('pocket-six', PocketSix);
       }
     }
 
+    this.senseBreaks(vx0, vy0, vx1, vy1);
+    this.drawLight(ctx, toDX, toDY, vx0, vy0, vx1, vy1);
     this.drawUpgrades(ctx, toDX, toDY, vx0, vy0, vx1, vy1);
     this.drawGold(ctx, toDX, toDY, vx0, vy0, vx1, vy1);
     this.drawParticles(ctx, dt, toDX, toDY, vx0, vy0, vx1, vy1);
+    this.drawAbilities(ctx, toDX, toDY, vx0, vy0, vx1, vy1);
     this.drawBalls(ctx, toDX, toDY, vx0, vy0, vx1, vy1);
     this.drawArcs(ctx, dt, toDX, toDY);
     this.drawDrop(ctx, toDX, toDY);
     this.drawFloats(ctx, dt, toDX, toDY);
     if (this.radar >= 2 && !sim.s.found) this.drawZone(ctx, toDX, toDY);
     if (sim.last && sim.last.length) this.drawLast(ctx, toDX, toDY, vx0, vy0, vx1, vy1);
+  };
+
+  // A light where a note sounds. kind: ball type (D.BALLS.length = the pickaxe, +1 = plain
+  // white); power 0..1; delay in s, so the light lands with the note, not before it.
+  R.ping = function (x, y, kind, power, delay) {
+    if (this.lights.length >= MAX_LIGHTS) this.lights.shift();
+    this.lights.push({ x, y, k: kind, p: Math.min(1, power), at: this.time + (delay || 0) });
+  };
+
+  // Rock breaking glints. Without music it is the only light from hits, so it shines brighter.
+  R.senseBreaks = function (vx0, vy0, vx1, vy1) {
+    const sim = this.sim, white = D.BALLS.length + 1, p = this.byNotes ? 0.14 : 0.4;
+    const every = this.byNotes ? 3 : 1;
+    // A few a frame: a Drone or a Gong breaks dozens at once, and stacked glints white out.
+    for (let f = 0, made = 0; f < sim.fxn && made < 6; f += every) {
+      if (this.lights.length > MAX_LIGHTS - 40) break;
+      const i = sim.fxI[f], x = i % W, y = (i / W) | 0;
+      if (x < vx0 || x > vx1 || y < vy0 || y > vy1) continue;
+      this.ping(x + 0.5, y + 0.5, white, p, 0);
+      made++;
+    }
+  };
+
+  R.drawLight = function (ctx, toDX, toDY, vx0, vy0, vx1, vy1) {
+    const c = this.cam, z = c.z, dpr = this.dpr, now = this.time, hw = this.cssW / 2, hh = this.cssH / 2;
+    const live = [];
+    for (const l of this.lights) {
+      const life = 0.45 + 0.7 * l.p, age = now - l.at;
+      if (age < life) live.push(l);
+    }
+    this.lights = live;
+    // How bright a light is right now: a quick rise, then a long fade like a ringing note.
+    const level = l => {
+      const age = now - l.at, life = 0.45 + 0.7 * l.p;
+      if (age < 0) return 0;
+      return age < 0.03 ? age / 0.03 : Math.pow(1 - (age - 0.03) / (life - 0.03), 1.6);
+    };
+    const m = 30 / z;
+
+    if (this.lightMode !== 'full') {
+      const dc = this.darkCtx, dw = this.dark.width, dh = this.dark.height;
+      const zt = Math.min(1, Math.max(0, (z - 0.4) / 3));
+      const amb = (0.4 + 0.34 * zt) * (1 - 0.5 * this.sunlit);
+      const sx = wx => ((wx - c.x) * z + hw) / LS, sy = wy => ((wy - c.y) * z + hh) / LS;
+      dc.globalCompositeOperation = 'source-over';
+      dc.clearRect(0, 0, dw, dh);
+      dc.fillStyle = `rgba(2,3,6,${amb.toFixed(3)})`;
+      dc.fillRect(0, 0, dw, dh);
+      dc.globalCompositeOperation = 'destination-out';
+      // Every ball carries a little light (a sample of them, in a big swarm).
+      const sim = this.sim, n = sim.n, bx = sim.bx, by = sim.by;
+      const br = Math.max(4, 9 * z) / LS, step = Math.max(1, Math.ceil(n / 700));
+      dc.globalAlpha = 0.6;
+      for (let k = (this.rot % step); k < n; k += step) {
+        const x = bx[k], y = by[k];
+        if (x < vx0 - m || x > vx1 + m || y < vy0 - m || y > vy1 + m) continue;
+        dc.drawImage(this.lightSprite, sx(x) - br, sy(y) - br, br * 2, br * 2);
+      }
+      for (const l of live) {
+        if (l.x < vx0 - m || l.x > vx1 + m || l.y < vy0 - m || l.y > vy1 + m) continue;
+        const a = level(l);
+        if (a <= 0.01) continue;
+        const r = Math.max(7, (8 + 16 * l.p) * z) / LS;
+        dc.globalAlpha = Math.min(1, a * (0.5 + 0.6 * l.p));
+        dc.drawImage(this.lightSprite, sx(l.x) - r, sy(l.y) - r, r * 2, r * 2);
+      }
+      dc.globalAlpha = 1;
+      dc.globalCompositeOperation = 'source-over';
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(this.dark, 0, 0, dw, dh, 0, 0, dw * LS * dpr, dh * LS * dpr);
+      ctx.imageSmoothingEnabled = false;
+    }
+
+    // Each note tints the crystal around it in its ball's colour, and a strong one glints.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const glint = [];
+    for (const l of live) {
+      if (l.x < vx0 - m || l.x > vx1 + m || l.y < vy0 - m || l.y > vy1 + m) continue;
+      const a = level(l);
+      if (a <= 0.03) continue;
+      const r = Math.max(5, (5 + 10 * l.p) * z) * dpr, cx = toDX(l.x), cy = toDY(l.y);
+      ctx.globalAlpha = a * (0.1 + 0.22 * l.p);
+      ctx.drawImage(this.tints[l.k] || this.lightSprite, cx - r, cy - r, r * 2, r * 2);
+      if (l.p > 0.5 && z >= 1.5 && now - l.at < 0.35) glint.push(cx, cy, a, r);
+    }
+    if (glint.length) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(1, dpr);
+      for (let q = 0; q < glint.length; q += 4) {
+        const cx = glint[q], cy = glint[q + 1], len = glint[q + 3] * 0.55 * glint[q + 2];
+        ctx.globalAlpha = glint[q + 2] * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(cx - len, cy); ctx.lineTo(cx + len, cy);
+        ctx.moveTo(cx, cy - len); ctx.lineTo(cx, cy + len);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   };
 
   // The last pixels of rock in the world, ringed so they can be found at any zoom.
@@ -4542,6 +4879,89 @@ registerProcessor('pocket-six', PocketSix);
       ctx.rect(cx - r, cy - r, r * 2, r * 2);
     }
     ctx.stroke();
+  };
+
+  // What the balls do, drawn under them: Gong rings, String strings, Echo ghosts, the Drone's
+  // hum, and the chord notes shimmering around a Harmonic.
+  const BK = {};
+  D.BALLS.forEach((b, i) => { BK[b.key] = i; });
+  R.drawAbilities = function (ctx, toDX, toDY, vx0, vy0, vx1, vy1) {
+    const sim = this.sim, z = this.cam.z, dpr = this.dpr, n = sim.n, bt = sim.bt, bx = sim.bx, by = sim.by, m = 60 / z;
+    const inView = (x, y, pad) => x > vx0 - pad && x < vx1 + pad && y > vy0 - pad && y < vy1 + pad;
+    ctx.save();
+    ctx.lineCap = 'round';
+    // Gong: rings of sound, fading as they spread.
+    ctx.strokeStyle = D.BALLS[BK.bomb].color;
+    ctx.lineWidth = Math.max(1, 1.2 * dpr);
+    for (const g of sim.rings) {
+      if (!inView(g.x, g.y, g.R)) continue;
+      ctx.globalAlpha = 0.75 * (1 - g.r / g.R);
+      ctx.beginPath();
+      ctx.arc(toDX(g.x), toDY(g.y), g.r * z * dpr, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // String: a line between each pair, trembling; slack and faint when too far apart to cut.
+    const L = sim.stringLen, pt = sim.partner, wob = Math.sin(this.time * 38);
+    ctx.strokeStyle = D.BALLS[BK.spark].color;
+    for (let k = 0; k < n; k++) {
+      const j = pt[k];
+      if (bt[k] !== BK.spark || j < k) continue;
+      const x0 = bx[k], y0 = by[k], x1 = bx[j], y1 = by[j], d = Math.hypot(x1 - x0, y1 - y0);
+      if (!inView(x0, y0, m) && !inView(x1, y1, m)) continue;
+      const taut = d <= L;
+      ctx.globalAlpha = taut ? 0.8 : 0.18;
+      ctx.lineWidth = Math.max(1, (taut ? 1.3 : 0.8) * dpr);
+      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2, a = taut ? wob * Math.min(3, d * 0.06) : 0;
+      const nx = d ? -(y1 - y0) / d : 0, ny = d ? (x1 - x0) / d : 0;
+      ctx.beginPath();
+      ctx.moveTo(toDX(x0), toDY(y0));
+      ctx.quadraticCurveTo(toDX(mx + nx * a), toDY(my + ny * a), toDX(x1), toDY(y1));
+      ctx.stroke();
+    }
+    // Echo: a ghost where each one was a second ago.
+    const gs = Math.max(2, Math.min(6, z * 0.9)) * dpr;
+    ctx.strokeStyle = D.BALLS[BK.venom].color;
+    ctx.lineWidth = Math.max(1, dpr);
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath();
+    for (let k = 0; k < n; k++) {
+      if (bt[k] !== BK.venom) continue;
+      const g = sim.ghost(k);
+      if (!inView(g.x, g.y, 4)) continue;
+      ctx.rect(toDX(g.x) - gs / 2, toDY(g.y) - gs / 2, gs, gs);
+    }
+    ctx.stroke();
+    // Drone: its hum, a soft ring breathing in and out.
+    ctx.strokeStyle = D.BALLS[BK.drill].color;
+    ctx.globalAlpha = 0.3 + 0.15 * Math.sin(this.time * 6);
+    ctx.beginPath();
+    const hr = (sim.humR + 0.5) * z * dpr;
+    for (let k = 0; k < n; k++) {
+      if (bt[k] !== BK.drill || !inView(bx[k], by[k], sim.humR)) continue;
+      const cx = toDX(bx[k]), cy = toDY(by[k]);
+      ctx.moveTo(cx + hr, cy);
+      ctx.arc(cx, cy, hr, 0, Math.PI * 2);
+    }
+    ctx.stroke();
+    // Harmonic: rock near it whose note is in the chord shimmers gold.
+    if (z >= 2) {
+      const cells = this.w.cells, R = 9, sz = Math.max(1, z * 0.45) * dpr;
+      ctx.fillStyle = '#ffd640';
+      ctx.globalAlpha = 0.35 + 0.2 * Math.sin(this.time * 5);
+      let shown = 0;
+      for (let k = 0; k < n && shown < 40; k++) {
+        if (bt[k] !== BK.midas || !inView(bx[k], by[k], R)) continue;
+        shown++;
+        const cx = bx[k] | 0, cy = by[k] | 0;
+        for (let y = cy - R; y <= cy + R; y++) for (let x = cx - R; x <= cx + R; x++) {
+          if (x < 0 || y < 0 || x >= W || y >= H) continue;
+          const i = y * W + x, t = cells[i] & MASK;
+          if (!t || t === T.RELIC || this.glow(i, x, y) !== 2 || !sim.inChord(x, y)) continue;
+          ctx.fillRect(toDX(x + 0.5) - sz / 2, toDY(y + 0.5) - sz / 2, sz, sz);
+        }
+      }
+    }
+    ctx.restore();
   };
 
   // Balls are small squares with a fading streak behind them.
@@ -4582,6 +5002,7 @@ registerProcessor('pocket-six', PocketSix);
     const fx = this.sim.arcFx;
     for (let q = 0; q + 3 < fx.length; q += 4) {
       if (this.arcs.length < 120) this.arcs.push({ x0: fx[q], y0: fx[q + 1], x1: fx[q + 2], y1: fx[q + 3], life: 0.16 });
+      if (q % 8 === 0) this.ping(fx[q + 2], fx[q + 3], D.BALLS.findIndex(b => b.key === 'spark'), 0.5, 0);
     }
     fx.length = 0;
     if (!this.arcs.length) return;
@@ -4992,7 +5413,7 @@ registerProcessor('pocket-six', PocketSix);
 
 </script>
 <script>
-// Pixel Quarry: the DOM layer. HUD, shop sheet, toasts and dialogs.
+// Stonesong: the DOM layer. HUD, shop sheet, toasts and dialogs.
 (function () {
   const PQ = window.PQ;
   const D = PQ.DATA, BALLS = D.BALLS;
@@ -5035,11 +5456,12 @@ registerProcessor('pocket-six', PocketSix);
     dmg: '<path d="M4 16 15 5M13 3l4 4M6 11l3 3M3 17l2-2"/>',
     spd: '<path d="M2 7h7M1 11h8M3 15h6"/><circle cx="14" cy="11" r="4"/>',
     pierce: '<path d="M2 10h15M13 6l4 4-4 4"/><rect x="7" y="4" width="3" height="12"/>',
-    radius: '<circle cx="10" cy="10" r="3"/><path d="M10 1v4M10 15v4M1 10h4M15 10h4M4 4l2.5 2.5M13.5 13.5 16 16M16 4l-2.5 2.5M4 16l2.5-2.5"/>',
-    spread: '<path d="M10 2c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z"/>',
-    arcs: '<path d="M11 1 4 11h5l-2 8 8-11h-5z"/>',
+    swell: '<circle cx="10" cy="10" r="2.5"/><circle cx="10" cy="10" r="5.5"/><circle cx="10" cy="10" r="8.5"/>',
+    decay: '<circle cx="5" cy="10" r="3"/><circle cx="11" cy="10" r="2.2"/><circle cx="16" cy="10" r="1.4"/>',
+    tension: '<circle cx="3" cy="10" r="2"/><circle cx="17" cy="10" r="2"/><path d="M5 10c2-3 3 3 5 0s3 3 5 0"/>',
     mult: '<circle cx="10" cy="10" r="7"/><path d="M7 7l6 6M13 7l-6 6"/>',
-    steer: '<circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2.5"/>',
+    hum: '<circle cx="10" cy="10" r="2.5"/><path d="M5 5a7 7 0 0 0 0 10M15 5a7 7 0 0 1 0 10"/>',
+    call: '<circle cx="10" cy="10" r="2.5"/><path d="M3 3l4 4M17 3l-4 4M3 17l4-4M17 17l-4-4"/>',
   };
   const icon = k => `<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
   const nodeIcon = (b, kind) => icon(kind === 'sp' ? b.special.key : kind);
@@ -5104,7 +5526,8 @@ registerProcessor('pocket-six', PocketSix);
     if (kind === 'dmg') return `${fmt(b.dmg * Math.pow(TR.dmg.mult, lv))} damage`;
     if (kind === 'spd') return `+${Math.round(TR.spd.step * lv * 100)}% speed`;
     const v = b.special.base + b.special.step * lv;
-    return { pierce: `${v} pixels`, radius: `${v} px blast`, spread: `${4 + 2 * v} generations`, arcs: `${v} arcs`, mult: `${v}× payout`, steer: `${v}× steering` }[b.special.key];
+    return { pierce: `${v} pixels`, swell: `${D.GONG_REACH + 8 * v} px ring`, decay: `${v} echo${v === 1 ? '' : 'es'}`, tension: `${v} px string`,
+      mult: `${v}× on chord notes`, hum: `${v} px hum`, call: `calls from ${v} px` }[b.special.key];
   };
 
   // The card above the tree: the selected node, its next level and the buy button.
@@ -5205,6 +5628,7 @@ registerProcessor('pocket-six', PocketSix);
       </dl>
       <div class="group-h">Settings</div>
       <label class="toggle"><input type="checkbox" id="optParticles" ${s.settings.particles ? 'checked' : ''}> Rock chips when pixels break</label>
+      <label class="toggle"><input type="checkbox" id="optLight" ${s.settings.light !== 'full' ? 'checked' : ''}> A dark cave, lit by the music (off: always lit)</label>
       <div class="group-h">Music</div>
       <label class="toggle"><input type="checkbox" id="optSound" ${s.settings.sound !== false ? 'checked' : ''}> Music from the balls</label>
       <label class="slider">Volume <input type="range" id="optVol" min="0" max="100" value="${Math.round((s.settings.vol == null ? 0.8 : s.settings.vol) * 100)}"></label>
@@ -5213,7 +5637,7 @@ registerProcessor('pocket-six', PocketSix);
       <p class="note">Drift: the music keeps its own time and the hits wait for the beat. Tombola: every hit on screen plays the moment it lands. Wild: faster, fuller, leaping and bending.</p>
       ${this.voicePicker(s)}
       <label class="toggle"><input type="checkbox" id="optVoices" ${s.settings.voices !== 'synth' ? 'checked' : ''}> Pocket Six DX7 voices (off: simple synth)</label>
-      <label class="toggle"><input type="checkbox" id="optDrums" ${s.settings.drums !== false ? 'checked' : ''}> Drums: Bombs play taiko, clearing ground brings a heartbeat</label>
+      <label class="toggle"><input type="checkbox" id="optDrums" ${s.settings.drums !== false ? 'checked' : ''}> Drums: Gongs play taiko, clearing ground brings a heartbeat</label>
       <label class="slider">Gravity <input type="range" id="optGravity" min="0" max="100" value="${Math.round((s.settings.gravity == null ? 0.5 : s.settings.gravity) * 100)}"></label>
       <label class="slider">Spin <input type="range" id="optSpin" min="0" max="100" value="${Math.round((s.settings.spin == null ? 0.3 : s.settings.spin) * 100)}"></label>
       <label class="toggle"><input type="checkbox" id="optTilt" ${s.settings.tilt ? 'checked' : ''}> Tilt the phone to steer it</label>
@@ -5231,11 +5655,16 @@ registerProcessor('pocket-six', PocketSix);
       ${c === 'god' ? `<div class="confirm"><p>God mode replaces this save with a new world where everything is unlocked and maxed: 455 balls of every type, 99,999 ◆ and a quadrillion bits, so you can push the music. Copy a save code first if you want this one back.</p>
         <div class="actions"><button type="button" class="btn gold" data-act="do-god">Start god mode</button><button type="button" class="btn" data-act="cancel">Cancel</button></div></div>`
         : `<div class="actions"><button type="button" class="btn" data-act="god">God mode</button></div>`}
-      <div class="group-h">Start over</div>
+      <div class="group-h">Redig this depth</div>
       <p class="note">A fresh world at this same depth. You keep your stars, perks and Journal; you lose this world's bits, balls and upgrades.</p>
       ${c === 'wipe' ? `<div class="confirm">${this.restartText()}
-        <div class="actions"><button type="button" class="btn danger" data-act="do-wipe">Start a new world</button><button type="button" class="btn" data-act="cancel">Keep playing</button></div></div>`
-        : `<div class="actions"><button type="button" class="btn danger" data-act="wipe">Start over</button></div>`}
+        <div class="actions"><button type="button" class="btn danger" data-act="do-wipe">Dig the new world</button><button type="button" class="btn" data-act="cancel">Keep playing</button></div></div>`
+        : `<div class="actions"><button type="button" class="btn danger" data-act="wipe">Redig</button></div>`}
+      <div class="group-h">New game</div>
+      <p class="note">Erase this save and start from the very beginning: depth 0, no stars, no perks, an empty Journal. Your settings and ball sounds stay.</p>
+      ${c === 'fresh' ? `<div class="confirm"><p>This erases everything: depth ${s.depth}, ${this.starWord(s.stars || 0)}, every perk and every story fragment you've found. It can't be undone. Copy a save code first (above) if you might want this one back.</p>
+        <div class="actions"><button type="button" class="btn danger" data-act="do-fresh">Erase and start fresh</button><button type="button" class="btn" data-act="cancel">Keep playing</button></div></div>`
+        : `<div class="actions"><button type="button" class="btn danger" data-act="fresh">New game</button></div>`}
       <p class="note">Depth ${s.depth}: ${esc(this.depthNote(s.depth))} Seed ${s.seed}</p>
       <div class="group-h">App</div>
       <p class="note">Version ${esc(this.g.build || 'dev')}</p>
@@ -5321,6 +5750,7 @@ registerProcessor('pocket-six', PocketSix);
     });
     $('sheetBody').addEventListener('change', e => {
       if (e.target.id === 'optParticles') this.g.state.settings.particles = e.target.checked;
+      if (e.target.id === 'optLight') this.g.state.settings.light = e.target.checked ? 'sound' : 'full';
       const mu = this.g.music, id = e.target.id;
       if (!mu) return;
       if (id === 'optSound') mu.set('sound', e.target.checked);
@@ -5400,6 +5830,8 @@ registerProcessor('pocket-six', PocketSix);
       case 'close': this.closeModal(); break;
       case 'wipe': this.confirm = 'wipe'; this.buildWorld(); break;
       case 'do-wipe': this.confirm = null; g.newWorld(false); return;
+      case 'fresh': this.confirm = 'fresh'; this.buildWorld(); break;
+      case 'do-fresh': this.confirm = null; g.newGame(); return;
       case 'god': this.confirm = 'god'; this.buildWorld(); break;
       case 'do-god': this.confirm = null; g.godMode(); return;
       case 'cancel': this.confirm = null; this.buildWorld(); break;
@@ -5438,16 +5870,18 @@ registerProcessor('pocket-six', PocketSix);
   U.closeModal = function () { $('modal').hidden = true; };
 
   U.welcome = function () {
-    this.modal(`<h2>Somewhere out in the dark is one Golden Pixel.</h2>
-      <p>You start in a small cave in the middle of 10,000,000 pixels. Your balls bounce around and break rock, and every broken pixel pays bits.</p>
+    this.modal(`<h2>The rock is singing.</h2>
+      <p>Somewhere in this dark quarry is one Golden Pixel, and every sound down here bends toward it. Your balls bounce through the crystal, and every pixel they break plays a note and pays bits.</p>
       <ul>
-        <li>Spend bits on more balls. The green arrow is your launcher: new balls fire from it.</li>
+        <li>Spend bits on more balls. Each kind plays its own instrument. The green arrow is your launcher: new balls fire from it.</li>
+        <li>The cave is dark. Wherever a note plays, the rock lights up.</li>
         <li>Tap open space to aim the launcher. Hold on open space to move it.</li>
         <li>Tap glowing rock to dig it yourself. Hold to keep digging.</li>
         <li>Magenta specks are upgrade pixels. Any ball that touches one collects ◆ for the Tree.</li>
-        <li>Relics are buried in the dark. Some hold pieces of a story.</li>
+        <li>Crystal relics grow in the dark. Some hold pieces of a story.</li>
+        <li>Best with sound on, and better with headphones. The speaker at the top mutes it.</li>
       </ul>
-      <div class="actions"><button type="button" class="btn gold" data-act="close">Start digging</button></div>`);
+      <div class="actions"><button type="button" class="btn gold" data-act="close">Start the song</button></div>`);
   };
 
   // A newly unlocked ball type, introduced.
@@ -5489,7 +5923,7 @@ registerProcessor('pocket-six', PocketSix);
   U.gold = function () {
     const s = this.g.state;
     this.modal(`<h2>You found the Golden Pixel.</h2>
-      <p class="sub">One pixel out of 10,000,000, after ${fmtTime(s.foundTime)} in this world. It pays a finder's fee of</p>
+      <p class="sub">The note the whole quarry was tuned to, found after ${fmtTime(s.foundTime)} in this world. It pays a finder's fee of</p>
       <div class="big">+${fmt(s.goldReward)}</div>
       <p>Go deeper to collect ${this.starWord(D.DEPTH.stars(s.depth))}. Every star adds +${D.STAR_BONUS * 100}% bits for good, and you can spend them on perks in the Stars tab. Depth ${s.depth + 1}: ${esc(this.depthNote(s.depth + 1))}</p>
       <p>${esc(this.clearText())}</p>
@@ -5561,7 +5995,7 @@ registerProcessor('pocket-six', PocketSix);
       const lv = PQ.milestone(s.owned[b.key]).lv;
       if (lv > this.mileSeen[t]) {
         this.mileSeen[t] = lv;
-        this.toast(`${D.MILESTONES[lv - 1]} ${b.name}s! They now earn ×${fmtX(sim.tMult[t])}.`, 3200);
+        this.toast(`${D.MILESTONES[lv - 1]} ${b.plural || b.name + 's'}! They now earn ×${fmtX(sim.tMult[t])}.`, 3200);
       }
     });
 
@@ -5692,7 +6126,7 @@ registerProcessor('pocket-six', PocketSix);
 // Stonesong: boot, game loop, autosave, and the music.
 (function () {
   const PQ = window.PQ, D = PQ.DATA;
-  const BUILD = '20261028-081902';                       // build.py stamps the build time here
+  const BUILD = '20261029-154757';                       // build.py stamps the build time here
   const $ = id => document.getElementById(id);
   const canvas = $('world');
   const yieldFrame = () => new Promise(r => setTimeout(r, 0));
@@ -5807,6 +6241,17 @@ registerProcessor('pocket-six', PocketSix);
     if (prestige) game.ui.toast(`Depth ${next.depth}. ${game.ui.depthNote(next.depth)}${bonus}`, 5000);
   };
 
+  // Erase the save and start from nothing, as on a first visit. Only the settings stay.
+  game.newGame = async function () {
+    const next = PQ.newState(newSeed());
+    next.settings = game.state.settings;
+    try { await PQ.Save.clearWorld(); } catch (e) { /* ignore */ }
+    PQ.Save.saveMeta(next);
+    await boot(next, false);
+    await saveAll();
+    game.ui.welcome();
+  };
+
   // Replace this save with a god-mode one (sim.js godState) in a brand new world.
   game.godMode = async function () {
     const next = PQ.godState(newSeed(), game.state);
@@ -5850,6 +6295,9 @@ registerProcessor('pocket-six', PocketSix);
     game.input.update(dt);
     renderer.radar = state.global.radar;
     renderer.particles = state.settings.particles;
+    renderer.lightMode = state.settings.light === 'full' ? 'full' : 'sound';
+    renderer.byNotes = !!sim.snd;
+    renderer.sunlit = sim.effectOn('shine') ? Math.min(1, renderer.sunlit + dt * 2) : Math.max(0, renderer.sunlit - dt);
     renderer.draw(dt);
     game.music.frame(dt);
     for (const e of sim.events.splice(0)) {
@@ -5898,7 +6346,7 @@ registerProcessor('pocket-six', PocketSix);
       PQ.Save.saveMeta(state);
       game.ui.modal(`<p class="kicker">The quarry has changed</p>
         <h2>A new world, in the dark.</h2>
-        <p>Pixel Quarry was rebuilt: you now start in a cave in the middle of everything, ball upgrades live in a skill tree paid with ◆ from magenta upgrade pixels, and relics hold pieces of a story.</p>
+        <p>The quarry was rebuilt: you now start in a cave in the middle of everything, ball upgrades live in a skill tree paid with ◆ from magenta upgrade pixels, and relics hold pieces of a story.</p>
         <p class="sub">Your old world could not come along. Your depth, stars and perks did.</p>
         <div class="actions"><button type="button" class="btn gold" data-act="close">Start digging</button></div>`);
     } else if (meta) {
